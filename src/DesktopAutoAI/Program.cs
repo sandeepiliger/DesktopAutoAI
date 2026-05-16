@@ -41,6 +41,7 @@ internal static class Program
                 ["dump", .. var rest] => DumpCommand(rest),
                 ["step", .. var rest] => StepCommand(rest, settings).GetAwaiter().GetResult(),
                 ["ping", .. var rest] => PingCommand(rest, settings).GetAwaiter().GetResult(),
+                ["run",  .. var rest] => RunCommand(rest, settings).GetAwaiter().GetResult(),
                 _ => PrintHelp(1),
             };
         }
@@ -204,6 +205,75 @@ internal static class Program
         return result.Status == ExecutionStatus.Failed ? 2 : 0;
     }
 
+    private static async Task<int> RunCommand(string[] args, AppSettings settings)
+    {
+        string? process = null;
+        string? goal = null;
+        string outDir = ".\\out";
+        int? maxStepsOverride = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--process" when i + 1 < args.Length:
+                    process = args[++i]; break;
+                case "--goal" when i + 1 < args.Length:
+                    goal = args[++i]; break;
+                case "--out" when i + 1 < args.Length:
+                    outDir = args[++i]; break;
+                case "--max-steps" when i + 1 < args.Length:
+                    maxStepsOverride = int.Parse(args[++i]); break;
+                default:
+                    Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
+                    return 1;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(process) || string.IsNullOrWhiteSpace(goal))
+        {
+            Log.Error(
+                "--process and --goal are required. Example: " +
+                "run --process Notepad --goal \"Type hello and save as test.txt\"");
+            return 1;
+        }
+
+        IActionPlanner planner;
+        try { planner = PlannerFactory.Create(settings.Planner); }
+        catch (Exception ex) { Log.Error(ex, "Failed to create planner"); return 1; }
+        Log.Information("Planner: {Provider} / {Model}", planner.ProviderName, planner.ModelId);
+
+        Log.Information("Attaching to process {Process}", process);
+        using var session = UiaSession.Attach(process);
+        Log.Information("Attached. Window title: {Title}", session.TargetWindow.Title);
+
+        var maxSteps = maxStepsOverride ?? settings.Planner.MaxSteps;
+        Log.Information("Loop config: max_steps={MaxSteps}, out_dir={OutDir}", maxSteps, Path.GetFullPath(outDir));
+
+        var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir);
+        var result = await loop.RunAsync(goal!, CancellationToken.None);
+
+        File.WriteAllText(
+            Path.Combine(outDir, "history.json"),
+            JsonSerializer.Serialize(new
+            {
+                outcome = result.Outcome.ToString(),
+                steps = result.StepsTaken,
+                message = result.Message,
+                history = result.History,
+            }, JsonOpts));
+
+        return result.Outcome switch
+        {
+            LoopOutcome.Done => 0,
+            LoopOutcome.Failed => 2,
+            LoopOutcome.MaxSteps => 3,
+            LoopOutcome.PlannerError => 4,
+            LoopOutcome.Cancelled => 130,
+            _ => 1,
+        };
+    }
+
     private static async Task<int> PingCommand(string[] args, AppSettings settings)
     {
         if (args.Length != 0)
@@ -249,6 +319,14 @@ internal static class Program
                 ANTHROPIC_API_KEY (or the provider's key) in the environment.
                 --dry-run prints the action without executing.
 
+              run --process <name> --goal "..." [--out <dir>] [--max-steps N]
+                Multi-step planning loop. Each step re-captures tree + screenshot,
+                asks the planner, executes, appends to history. Stops when the
+                planner says 'done' / 'fail', the step limit is reached, or
+                the planner / executor errors out. Per-step artifacts
+                (tree-NN.json, shot-NN.png, action-NN.json) land in <out>, plus
+                a final history.json.
+
               ping
                 Send a trivial "say pong" request to the configured planner.
                 No tools, no image, no UIA. Use this to isolate connectivity /
@@ -257,6 +335,7 @@ internal static class Program
             Examples:
               DesktopAutoAI.exe dump --process Notepad --out .\out
               DesktopAutoAI.exe step --process Notepad --goal "Open the File menu"
+              DesktopAutoAI.exe run  --process Notepad --goal "Type hello and save as test.txt"
               DesktopAutoAI.exe ping
             """);
         return exitCode;
