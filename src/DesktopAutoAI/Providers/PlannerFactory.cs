@@ -44,6 +44,8 @@ public static class PlannerFactory
         return new GeminiPlanner(
             model: settings.Model,
             maxTokens: settings.MaxTokens,
-            apiKey: apiKey);
+            apiKey: apiKey,
+            timeoutSeconds: settings.TimeoutSeconds,
+            apiVersion: settings.ApiVersion);
     }
 }
