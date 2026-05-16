@@ -13,8 +13,7 @@ public static class PlannerFactory
         return provider switch
         {
             Anthropic => CreateAnthropic(settings.Anthropic),
-            Google => throw new NotImplementedException(
-                "Google/Gemini provider lands in M2.5."),
+            Google => CreateGemini(settings.Google),
             _ => throw new InvalidOperationException(
                 $"Unknown planner provider '{settings.Provider}'. " +
                 $"Supported: {Anthropic}, {Google}."),
@@ -29,6 +28,20 @@ public static class PlannerFactory
                 "ANTHROPIC_API_KEY environment variable is not set.");
 
         return new AnthropicPlanner(
+            model: settings.Model,
+            maxTokens: settings.MaxTokens,
+            apiKey: apiKey);
+    }
+
+    private static GeminiPlanner CreateGemini(GoogleSettings settings)
+    {
+        var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
+                     ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY");
+        if (string.IsNullOrEmpty(apiKey))
+            throw new InvalidOperationException(
+                "GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set.");
+
+        return new GeminiPlanner(
             model: settings.Model,
             maxTokens: settings.MaxTokens,
             apiKey: apiKey);
