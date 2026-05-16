@@ -40,6 +40,7 @@ internal static class Program
                 ["help"] or ["-h"] or ["--help"] => PrintHelp(0),
                 ["dump", .. var rest] => DumpCommand(rest),
                 ["step", .. var rest] => StepCommand(rest, settings).GetAwaiter().GetResult(),
+                ["ping", .. var rest] => PingCommand(rest, settings).GetAwaiter().GetResult(),
                 _ => PrintHelp(1),
             };
         }
@@ -159,7 +160,9 @@ internal static class Program
         var rect = session.TargetWindow.BoundingRectangle;
         var shotPath = Path.Combine(outDir, "shot.png");
         ScreenCapture.CapturePng(rect, shotPath);
-        var shotBytes = File.ReadAllBytes(shotPath);
+        var shotBytes = ScreenCapture.ReadAndDownscalePng(shotPath, maxEdge: 1280);
+        Log.Information("Screenshot: {W}x{H} on disk, {Kb} KB to LLM (downscaled to 1280px max edge)",
+            rect.Width, rect.Height, shotBytes.Length / 1024);
 
         var request = new PlanRequest(
             Goal: goal!,
@@ -201,6 +204,35 @@ internal static class Program
         return result.Status == ExecutionStatus.Failed ? 2 : 0;
     }
 
+    private static async Task<int> PingCommand(string[] args, AppSettings settings)
+    {
+        if (args.Length != 0)
+        {
+            Log.Error("Unknown argument: {Arg}. Usage: ping", args[0]);
+            return 1;
+        }
+
+        IActionPlanner planner;
+        try { planner = PlannerFactory.Create(settings.Planner); }
+        catch (Exception ex) { Log.Error(ex, "Failed to create planner"); return 1; }
+        Log.Information("Planner: {Provider} / {Model}", planner.ProviderName, planner.ModelId);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var reply = await planner.PingAsync(CancellationToken.None);
+            sw.Stop();
+            Log.Information("Ping OK in {Ms}ms. Reply: {Reply}", sw.ElapsedMilliseconds, reply);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            Log.Error(ex, "Ping failed after {Ms}ms", sw.ElapsedMilliseconds);
+            return 1;
+        }
+    }
+
     private static int PrintHelp(int exitCode)
     {
         Console.WriteLine("""
@@ -217,9 +249,15 @@ internal static class Program
                 ANTHROPIC_API_KEY (or the provider's key) in the environment.
                 --dry-run prints the action without executing.
 
+              ping
+                Send a trivial "say pong" request to the configured planner.
+                No tools, no image, no UIA. Use this to isolate connectivity /
+                auth / model-id problems from payload / schema problems.
+
             Examples:
               DesktopAutoAI.exe dump --process Notepad --out .\out
               DesktopAutoAI.exe step --process Notepad --goal "Open the File menu"
+              DesktopAutoAI.exe ping
             """);
         return exitCode;
     }
