@@ -1,0 +1,24 @@
+# .NET build output
+**/bin/
+**/obj/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local outputs from `dump` / `step` / `run`
+out/
+
+# Local secrets / overrides
+appsettings.Local.json
+appsettings.Development.json
+.env
+.env.local
+
+# OS
+Thumbs.db
+.DS_Store
