@@ -50,6 +50,30 @@ public sealed class GeminiPlanner : IActionPlanner
         _genModel.Timeout = _timeout;
     }
 
+    public async Task<string> PingAsync(CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(_timeout);
+
+        try
+        {
+            var resp = await _genModel.GenerateContent(
+                new GenerateContentRequest
+                {
+                    Contents = [new Content { Role = "user", Parts = [new Part { Text = "Say 'pong'." }] }],
+                    GenerationConfig = new GenerationConfig { MaxOutputTokens = 32 },
+                },
+                cancellationToken: cts.Token);
+            return (resp.Text ?? "(no text)").Trim();
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Gemini ping did not respond within {(int)_timeout.TotalSeconds}s. " +
+                $"Endpoint={Endpoint()}.");
+        }
+    }
+
     public async Task<PlannedAction> PlanNextAsync(PlanRequest request, CancellationToken ct)
     {
         var screenshotBase64 = Convert.ToBase64String(request.ScreenshotPng);

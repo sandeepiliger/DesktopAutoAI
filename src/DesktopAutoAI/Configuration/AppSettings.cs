@@ -29,7 +29,7 @@ public sealed class AnthropicSettings
 
 public sealed class GoogleSettings
 {
-    public string Model { get; set; } = "gemini-2.5-pro";
+    public string Model { get; set; } = "gemini-2.5-flash";
     public int MaxTokens { get; set; } = 2048;
     public int TimeoutSeconds { get; set; } = 120;
 

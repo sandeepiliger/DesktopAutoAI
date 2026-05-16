@@ -37,6 +37,26 @@ public sealed class AnthropicPlanner : IActionPlanner
             : new AnthropicClient { ApiKey = apiKey };
     }
 
+    public async Task<string> PingAsync(CancellationToken ct)
+    {
+        var msg = await _client.Messages.Create(
+            new MessageCreateParams
+            {
+                Model = _model,
+                MaxTokens = 32,
+                Messages =
+                [
+                    new MessageParam { Role = Role.User, Content = new MessageParamContent("Say 'pong'.") },
+                ],
+            },
+            cancellationToken: ct);
+
+        foreach (var block in msg.Content)
+            if (block.TryPickText(out var text))
+                return text.Text.Trim();
+        return "(no text)";
+    }
+
     public async Task<PlannedAction> PlanNextAsync(PlanRequest request, CancellationToken ct)
     {
         var screenshotBase64 = Convert.ToBase64String(request.ScreenshotPng);
