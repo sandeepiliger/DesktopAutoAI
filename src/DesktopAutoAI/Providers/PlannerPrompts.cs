@@ -45,6 +45,20 @@ public static class PlannerPrompts
              The agent will confirm with the user before executing.
           7. Output strictly via the `take_action` tool / function call.
              No prose outside it.
+          8. Windows file dialogs (Save As / Open): the MOST RELIABLE way
+             to save to a specific folder is to type the FULL PATH directly
+             into the "File name" Edit box and press Save / Enter -
+             Windows accepts e.g. `C:\Users\<user>\Desktop\test.txt` and
+             navigates + names the file in one shot. Do NOT rely on
+             Desktop / Documents / Downloads being pinned in the left
+             navigation pane; they often are not. If you do not know the
+             username, `%USERPROFILE%\Desktop\test.txt` also works.
+          9. Do not repeat an action that just failed. If the previous
+             step's result was "failed" or the same target is still
+             unreachable, switch strategy: try a different selector, a
+             keyboard shortcut (Alt+D to focus the address bar, Ctrl+L,
+             Enter to confirm), or type a path directly into the relevant
+             Edit box. Re-issuing the same failing action wastes a step.
         """;
 
     public const string TakeActionDescription =
