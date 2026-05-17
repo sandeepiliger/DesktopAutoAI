@@ -31,9 +31,17 @@ public sealed record LoopResult(
 [SupportedOSPlatform("windows")]
 public sealed class PlanningLoop
 {
+    // Indented options for on-disk artifacts (human-readable).
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    // Compact options for the UIA tree sent to the LLM — no whitespace, skip nulls.
+    private static readonly JsonSerializerOptions TreeJsonOpts = new()
+    {
+        WriteIndented = false,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
@@ -42,6 +50,7 @@ public sealed class PlanningLoop
     private readonly ActionExecutor _executor;
     private readonly SafetyGate? _safety;
     private readonly int _maxSteps;
+    private readonly int _historyWindow;
     private readonly int _screenshotMaxEdge;
     private readonly string _outDir;
     private readonly int _postActionSettleMs;
@@ -53,13 +62,15 @@ public sealed class PlanningLoop
         int screenshotMaxEdge,
         string outDir,
         SafetyGate? safety = null,
-        int postActionSettleMs = 150)
+        int postActionSettleMs = 150,
+        int historyWindow = 10)
     {
         _planner = planner;
         _session = session;
         _executor = new ActionExecutor(session.TargetWindow);
         _safety = safety;
         _maxSteps = maxSteps > 0 ? maxSteps : 25;
+        _historyWindow = historyWindow > 0 ? historyWindow : 10;
         _screenshotMaxEdge = screenshotMaxEdge > 0 ? screenshotMaxEdge : 1280;
         _outDir = outDir;
         _postActionSettleMs = Math.Max(0, postActionSettleMs);
@@ -85,8 +96,11 @@ public sealed class PlanningLoop
             PlannedAction planned;
             try
             {
+                var recentHistory = history.Count > _historyWindow
+                    ? history.GetRange(history.Count - _historyWindow, _historyWindow)
+                    : history;
                 planned = await _planner.PlanNextAsync(
-                    new PlanRequest(goal, treeJson, shotBytes, history), ct);
+                    new PlanRequest(goal, treeJson, shotBytes, recentHistory), ct);
             }
             catch (OperationCanceledException)
             {
@@ -176,8 +190,9 @@ public sealed class PlanningLoop
     private async Task<(string TreeJson, byte[] ShotBytes)> CaptureWorldAsync(int step, CancellationToken ct)
     {
         var tree = UiaTreeDumper.Dump(_session.TargetWindow);
-        var treeJson = JsonSerializer.Serialize(tree, JsonOpts);
-        File.WriteAllText(Path.Combine(_outDir, $"tree-{step:D2}.json"), treeJson);
+        var treeJson = JsonSerializer.Serialize(tree, TreeJsonOpts);
+        File.WriteAllText(Path.Combine(_outDir, $"tree-{step:D2}.json"),
+            JsonSerializer.Serialize(tree, JsonOpts));
 
         var rect = await WaitForValidBoundsAsync(ct);
         var shotPath = Path.Combine(_outDir, $"shot-{step:D2}.png");
