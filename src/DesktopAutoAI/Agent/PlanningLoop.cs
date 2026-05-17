@@ -18,7 +18,8 @@ public sealed record LoopResult(
     LoopOutcome Outcome,
     int StepsTaken,
     string Message,
-    IReadOnlyList<HistoryEntry> History);
+    IReadOnlyList<HistoryEntry> History,
+    bool ContainsPasswordFields = false);
 
 /// <summary>
 /// Multi-step planning loop. Each step: re-capture tree + screenshot, ask the
@@ -69,6 +70,7 @@ public sealed class PlanningLoop
     {
         var history = new List<HistoryEntry>();
         var totalSw = Stopwatch.StartNew();
+        var containsPassword = false;
 
         for (int step = 1; step <= _maxSteps; step++)
         {
@@ -93,10 +95,8 @@ public sealed class PlanningLoop
             catch (Exception ex)
             {
                 Log.Error(ex, "Planner failed at step {Step}", step);
-                return Finish(LoopOutcome.PlannerError, step - 1, ex.Message, history, totalSw);
+                return Finish(LoopOutcome.PlannerError, step - 1, ex.Message, history, totalSw, containsPassword);
             }
-
-            WriteArtifact($"action-{step:D2}.json", planned);
 
             var marker = planned.IsDestructive ? " [destructive!]" : "";
             Log.Information("step {Step}: {Type}{Marker} -- {Thought}",
@@ -113,30 +113,43 @@ public sealed class PlanningLoop
                 catch (OperationCanceledException)
                 {
                     return Finish(LoopOutcome.Cancelled, step - 1,
-                        "Cancelled while awaiting confirmation.", history, totalSw);
+                        "Cancelled while awaiting confirmation.", history, totalSw, containsPassword);
                 }
                 if (!allowed)
                 {
                     history.Add(new HistoryEntry(step, planned.Thought, planned.Action,
                         "denied: user declined destructive action"));
                     return Finish(LoopOutcome.Denied, step,
-                        "User denied a destructive action.", history, totalSw);
+                        "User denied a destructive action.", history, totalSw, containsPassword);
                 }
             }
 
             var result = ExecuteWithRetry(planned.Action, ct);
             Log.Information("step {Step}: {Status} -- {Message}", step, result.Status, result.Message);
 
-            history.Add(new HistoryEntry(step, planned.Thought, planned.Action,
+            // Redact typed text when the target was an IsPassword=true Edit
+            // control. Applies to the artifact, the in-memory history, and
+            // any downstream serialisation (history.json).
+            var actionForRecord = planned.Action;
+            var plannedForArtifact = planned;
+            if (result.WasPasswordField)
+            {
+                containsPassword = true;
+                actionForRecord = planned.Action with { Text = "***REDACTED***" };
+                plannedForArtifact = planned with { Action = actionForRecord };
+            }
+            WriteArtifact($"action-{step:D2}.json", plannedForArtifact);
+
+            history.Add(new HistoryEntry(step, planned.Thought, actionForRecord,
                 $"{result.Status.ToString().ToLowerInvariant()}: {result.Message}"));
 
             switch (result.Status)
             {
                 case ExecutionStatus.Done:
-                    return Finish(LoopOutcome.Done, step, result.Message, history, totalSw);
+                    return Finish(LoopOutcome.Done, step, result.Message, history, totalSw, containsPassword);
 
                 case ExecutionStatus.Failed when planned.Action.Type == ActionTypes.Fail:
-                    return Finish(LoopOutcome.Failed, step, result.Message, history, totalSw);
+                    return Finish(LoopOutcome.Failed, step, result.Message, history, totalSw, containsPassword);
 
                 case ExecutionStatus.Failed:
                     Log.Debug("Step {Step} failed at execution but model didn't give up; continuing.", step);
@@ -149,7 +162,7 @@ public sealed class PlanningLoop
                         catch (OperationCanceledException)
                         {
                             return Finish(LoopOutcome.Cancelled, step,
-                                "Cancelled between steps.", history, totalSw);
+                                "Cancelled between steps.", history, totalSw, containsPassword);
                         }
                     }
                     break;
@@ -157,7 +170,7 @@ public sealed class PlanningLoop
         }
 
         return Finish(LoopOutcome.MaxSteps, _maxSteps,
-            $"Hit step limit ({_maxSteps}) without finishing.", history, totalSw);
+            $"Hit step limit ({_maxSteps}) without finishing.", history, totalSw, containsPassword);
     }
 
     private async Task<(string TreeJson, byte[] ShotBytes)> CaptureWorldAsync(int step, CancellationToken ct)
@@ -230,11 +243,12 @@ public sealed class PlanningLoop
 
     private static LoopResult Finish(
         LoopOutcome outcome, int steps, string message,
-        IReadOnlyList<HistoryEntry> history, Stopwatch sw)
+        IReadOnlyList<HistoryEntry> history, Stopwatch sw,
+        bool containsPassword = false)
     {
         sw.Stop();
         Log.Information("Loop finished: {Outcome} after {Steps} steps in {Ms}ms -- {Message}",
             outcome, steps, sw.ElapsedMilliseconds, message);
-        return new LoopResult(outcome, steps, message, history);
+        return new LoopResult(outcome, steps, message, history, containsPassword);
     }
 }
