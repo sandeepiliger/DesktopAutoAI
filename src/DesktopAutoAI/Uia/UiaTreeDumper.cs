@@ -4,20 +4,16 @@ using FlaUI.Core.Definitions;
 
 namespace DesktopAutoAI.Uia;
 
-public sealed record Rect(int X, int Y, int Width, int Height);
-
 public sealed class TreeNode
 {
     public string ControlType { get; init; } = "";
     public string? Name { get; init; }
     public string? AutomationId { get; init; }
-    public string? ClassName { get; init; }
     public bool IsEnabled { get; init; }
     public bool IsKeyboardFocusable { get; init; }
-    public Rect? BoundingRect { get; init; }
-    public List<string> SupportedPatterns { get; init; } = new();
+    public List<string>? SupportedPatterns { get; init; }
     public List<int> Path { get; init; } = new();
-    public List<TreeNode> Children { get; init; } = new();
+    public List<TreeNode>? Children { get; init; }
 }
 
 [SupportedOSPlatform("windows")]
@@ -69,25 +65,19 @@ public static class UiaTreeDumper
         bool keep = depth == 0 || isInteractive || isNamed || childNodes.Count > 0;
         if (!keep) return null;
 
+        var patterns = ListSupportedPatterns(el);
         return new TreeNode
         {
             ControlType = ctlType.ToString(),
             Name = string.IsNullOrEmpty(name) ? null : name,
             AutomationId = string.IsNullOrEmpty(autoId) ? null : autoId,
-            ClassName = string.IsNullOrEmpty(el.Properties.ClassName.ValueOrDefault)
-                ? null
-                : el.Properties.ClassName.ValueOrDefault,
             IsEnabled = el.Properties.IsEnabled.ValueOrDefault,
             IsKeyboardFocusable = el.Properties.IsKeyboardFocusable.ValueOrDefault,
-            BoundingRect = ToRect(el.Properties.BoundingRectangle.ValueOrDefault),
-            SupportedPatterns = ListSupportedPatterns(el),
+            SupportedPatterns = patterns.Count > 0 ? patterns : null,
             Path = path,
-            Children = childNodes,
+            Children = childNodes.Count > 0 ? childNodes : null,
         };
     }
-
-    private static Rect? ToRect(System.Drawing.Rectangle r)
-        => r.Width <= 0 || r.Height <= 0 ? null : new Rect(r.X, r.Y, r.Width, r.Height);
 
     private static List<string> ListSupportedPatterns(AutomationElement el)
     {

@@ -157,8 +157,13 @@ internal static class Program
         Log.Information("Attached. Window title: {Title}", session.TargetWindow.Title);
 
         var tree = UiaTreeDumper.Dump(session.TargetWindow);
-        var treeJson = JsonSerializer.Serialize(tree, JsonOpts);
-        File.WriteAllText(Path.Combine(outDir, "tree.json"), treeJson);
+        // Indented for the artifact file; compact for the LLM payload.
+        File.WriteAllText(Path.Combine(outDir, "tree.json"), JsonSerializer.Serialize(tree, JsonOpts));
+        var treeJson = JsonSerializer.Serialize(tree, new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        });
 
         var rect = session.TargetWindow.BoundingRectangle;
         var shotPath = Path.Combine(outDir, "shot.png");
@@ -352,7 +357,8 @@ internal static class Program
             }
 
             // 2. Live planning loop (M3 + M5 safety gate).
-            var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate);
+            var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate,
+                historyWindow: settings.Planner.HistoryWindow);
             var result = await loop.RunAsync(goal!, ct);
 
             File.WriteAllText(

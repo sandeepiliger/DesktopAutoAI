@@ -17,13 +17,16 @@ public sealed class PlannerSettings
 {
     public string Provider { get; set; } = "anthropic";
     public int MaxSteps { get; set; } = 25;
+    /// <summary>How many recent history entries to send to the LLM per step.
+    /// Caps token growth on long runs.</summary>
+    public int HistoryWindow { get; set; } = 10;
     public AnthropicSettings Anthropic { get; set; } = new();
     public GoogleSettings Google { get; set; } = new();
 }
 
 public sealed class AnthropicSettings
 {
-    public string Model { get; set; } = "claude-opus-4-7";
+    public string Model { get; set; } = "claude-sonnet-4-6";
     public int MaxTokens { get; set; } = 2048;
     public int TimeoutSeconds { get; set; } = 120;
 }
