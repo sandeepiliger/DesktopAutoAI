@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DesktopAutoAI", "src\DesktopAutoAI\DesktopAutoAI.csproj", "{8B6F1C0A-7E3D-4A52-9F11-2C9D3E4B5A60}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DesktopAutoAI.UI", "src\DesktopAutoAI.UI\DesktopAutoAI.UI.csproj", "{2B3F5C8E-8A4C-4F11-9D88-7E1F4B6A2C30}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -14,6 +16,10 @@ Global
 		{8B6F1C0A-7E3D-4A52-9F11-2C9D3E4B5A60}.Debug|x64.Build.0 = Debug|x64
 		{8B6F1C0A-7E3D-4A52-9F11-2C9D3E4B5A60}.Release|x64.ActiveCfg = Release|x64
 		{8B6F1C0A-7E3D-4A52-9F11-2C9D3E4B5A60}.Release|x64.Build.0 = Release|x64
+		{2B3F5C8E-8A4C-4F11-9D88-7E1F4B6A2C30}.Debug|x64.ActiveCfg = Debug|x64
+		{2B3F5C8E-8A4C-4F11-9D88-7E1F4B6A2C30}.Debug|x64.Build.0 = Debug|x64
+		{2B3F5C8E-8A4C-4F11-9D88-7E1F4B6A2C30}.Release|x64.ActiveCfg = Release|x64
+		{2B3F5C8E-8A4C-4F11-9D88-7E1F4B6A2C30}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
