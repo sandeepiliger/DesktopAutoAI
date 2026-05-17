@@ -1,0 +1,378 @@
+<Window x:Class="SampleWpfApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:sys="clr-namespace:System;assembly=mscorlib"
+        mc:Ignorable="d"
+        Title="Sample Operations Console"
+        Height="820"
+        Width="1280"
+        MinHeight="720"
+        MinWidth="1100"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F7FA"
+        AutomationProperties.Name="Sample Operations Console Window">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#195C7A" />
+        <SolidColorBrush x:Key="PrimaryDarkBrush" Color="#103D52" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#C7512F" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#60707D" />
+        <SolidColorBrush x:Key="BorderBrushSoft" Color="#D9E1E8" />
+
+        <Style TargetType="Button">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#B9C7D3" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#1E2F3B" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource PrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+        </Style>
+
+        <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+        </Style>
+
+        <Style x:Key="SectionBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushSoft}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="14" />
+        </Style>
+
+        <Style x:Key="KpiValueStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="26" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#162A36" />
+        </Style>
+
+        <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+        <Menu DockPanel.Dock="Top"
+              Background="{StaticResource PrimaryDarkBrush}"
+              Foreground="#FFFFFF"
+              AutomationProperties.Name="Main Menu">
+            <MenuItem Header="_File" AutomationProperties.Name="File Menu">
+                <MenuItem Header="_New Order" Click="NewOrderMenuItem_Click" AutomationProperties.Name="New Order Menu Item" />
+                <MenuItem Header="_Export Report" Click="ExportReportMenuItem_Click" AutomationProperties.Name="Export Report Menu Item" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="ExitMenuItem_Click" AutomationProperties.Name="Exit Menu Item" />
+            </MenuItem>
+            <MenuItem Header="_View" AutomationProperties.Name="View Menu">
+                <MenuItem Header="_Dashboard" Click="DashboardMenuItem_Click" AutomationProperties.Name="Dashboard Menu Item" />
+                <MenuItem Header="_Inventory" Click="InventoryMenuItem_Click" AutomationProperties.Name="Inventory Menu Item" />
+            </MenuItem>
+            <MenuItem Header="_Help" AutomationProperties.Name="Help Menu">
+                <MenuItem Header="_About" Click="AboutMenuItem_Click" AutomationProperties.Name="About Menu Item" />
+            </MenuItem>
+        </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom"
+                   Background="#EAF0F5"
+                   AutomationProperties.Name="Application Status Bar">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusTextBlock"
+                           Text="Ready - sample data loaded"
+                           AutomationProperties.Name="Status Message" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem>
+                <TextBlock Text="{Binding Source={x:Static sys:DateTime.Now}, StringFormat='Started: {0:dd MMM yyyy hh:mm tt}'}" />
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <ProgressBar x:Name="SyncProgressBar"
+                             Width="140"
+                             Height="16"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="68"
+                             AutomationProperties.Name="Sync Progress" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="72" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    Background="{StaticResource PrimaryBrush}"
+                    Padding="22,12">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Left">
+                        <TextBlock Text="Northwind Operations"
+                                   Foreground="#FFFFFF"
+                                   FontSize="24"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="Sample WPF application for UI automation testing"
+                                   Foreground="#D7EEF6"
+                                   FontSize="13" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Button x:Name="RefreshButton"
+                                Content="Refresh"
+                                Click="RefreshButton_Click"
+                                AutomationProperties.Name="Refresh Dashboard Button" />
+                        <Button x:Name="SaveButton"
+                                Content="Save"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                Click="SaveButton_Click"
+                                AutomationProperties.Name="Save Changes Button" />
+                        <Button x:Name="SignOutButton"
+                                Content="Sign Out"
+                                Click="SignOutButton_Click"
+                                AutomationProperties.Name="Sign Out Button" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="230" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="#203341"
+                        Padding="14">
+                    <StackPanel>
+                        <TextBlock Text="WORKSPACE"
+                                   Foreground="#9DB4C2"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,12" />
+                        <Button Content="Dashboard" HorizontalContentAlignment="Left" Click="SidebarButton_Click" AutomationProperties.Name="Sidebar Dashboard Button" />
+                        <Button Content="Orders" HorizontalContentAlignment="Left" Click="SidebarButton_Click" AutomationProperties.Name="Sidebar Orders Button" />
+                        <Button Content="Customers" HorizontalContentAlignment="Left" Click="SidebarButton_Click" AutomationProperties.Name="Sidebar Customers Button" />
+                        <Button Content="Inventory" HorizontalContentAlignment="Left" Click="SidebarButton_Click" AutomationProperties.Name="Sidebar Inventory Button" />
+                        <Button Content="Reports" HorizontalContentAlignment="Left" Click="SidebarButton_Click" AutomationProperties.Name="Sidebar Reports Button" />
+
+                        <Separator Margin="0,16" Background="#496170" />
+
+                        <TextBlock Text="SYSTEM FLAGS"
+                                   Foreground="#9DB4C2"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,10" />
+                        <CheckBox x:Name="AutoSyncCheckBox" Content="Auto sync enabled" IsChecked="True" Foreground="#FFFFFF" Margin="0,4" Checked="OptionChanged" Unchecked="OptionChanged" AutomationProperties.Name="Auto Sync Checkbox" />
+                        <CheckBox x:Name="NotificationsCheckBox" Content="Notifications" IsChecked="True" Foreground="#FFFFFF" Margin="0,4" Checked="OptionChanged" Unchecked="OptionChanged" AutomationProperties.Name="Notifications Checkbox" />
+                        <CheckBox x:Name="MaintenanceCheckBox" Content="Maintenance mode" Foreground="#FFFFFF" Margin="0,4" Checked="OptionChanged" Unchecked="OptionChanged" AutomationProperties.Name="Maintenance Mode Checkbox" />
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Column="1"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Padding="18">
+                    <StackPanel>
+                        <UniformGrid Columns="4" Margin="0,0,0,16">
+                            <Border Style="{StaticResource SectionBorderStyle}" Margin="0,0,12,0" AutomationProperties.Name="Open Orders KPI Card">
+                                <StackPanel>
+                                    <TextBlock Text="Open Orders" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBlock x:Name="OpenOrdersTextBlock" Text="42" Style="{StaticResource KpiValueStyle}" />
+                                    <TextBlock Text="+8 since yesterday" Foreground="#287A4B" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SectionBorderStyle}" Margin="0,0,12,0" AutomationProperties.Name="Revenue KPI Card">
+                                <StackPanel>
+                                    <TextBlock Text="Revenue" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBlock Text="$128.4K" Style="{StaticResource KpiValueStyle}" />
+                                    <TextBlock Text="Month to date" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SectionBorderStyle}" Margin="0,0,12,0" AutomationProperties.Name="Inventory Alerts KPI Card">
+                                <StackPanel>
+                                    <TextBlock Text="Inventory Alerts" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBlock Text="7" Style="{StaticResource KpiValueStyle}" />
+                                    <TextBlock Text="2 critical" Foreground="{StaticResource AccentBrush}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SectionBorderStyle}" AutomationProperties.Name="Customer Satisfaction KPI Card">
+                                <StackPanel>
+                                    <TextBlock Text="Satisfaction" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBlock Text="94%" Style="{StaticResource KpiValueStyle}" />
+                                    <TextBlock Text="Based on recent surveys" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Style="{StaticResource SectionBorderStyle}" Margin="0,0,12,0">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                        <TextBlock Text="Order Management" FontSize="18" FontWeight="Bold" />
+                                        <TextBlock Text="Search, filter, select, and update sample order records." Style="{StaticResource CaptionTextStyle}" />
+                                    </StackPanel>
+
+                                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                        <TextBox x:Name="SearchTextBox" Width="210" Height="34" Margin="0,0,8,0" Padding="8,6" Text="order, customer, city" AutomationProperties.Name="Order Search Textbox" />
+                                        <ComboBox x:Name="StatusComboBox" Width="150" Height="34" Margin="0,0,8,0" SelectedIndex="0" AutomationProperties.Name="Order Status Filter ComboBox">
+                                            <ComboBoxItem Content="All statuses" />
+                                            <ComboBoxItem Content="New" />
+                                            <ComboBoxItem Content="Processing" />
+                                            <ComboBoxItem Content="Shipped" />
+                                            <ComboBoxItem Content="Delayed" />
+                                        </ComboBox>
+                                        <Button Content="Search" Style="{StaticResource PrimaryButtonStyle}" Click="SearchButton_Click" AutomationProperties.Name="Search Orders Button" />
+                                        <Button Content="Clear" Click="ClearSearchButton_Click" AutomationProperties.Name="Clear Search Button" />
+                                    </WrapPanel>
+                                    <TextBlock x:Name="FilterResultTextBlock"
+                                               DockPanel.Dock="Top"
+                                               Text="Showing 6 of 6 orders"
+                                               Style="{StaticResource CaptionTextStyle}"
+                                               Margin="0,0,0,8"
+                                               AutomationProperties.Name="Filter Result Text" />
+
+                                    <DataGrid x:Name="OrdersDataGrid"
+                                              Height="300"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              IsReadOnly="True"
+                                              SelectionMode="Single"
+                                              SelectionChanged="OrdersDataGrid_SelectionChanged"
+                                              AutomationProperties.Name="Orders Data Grid">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Order ID" Binding="{Binding OrderId}" Width="90" />
+                                            <DataGridTextColumn Header="Customer" Binding="{Binding Customer}" Width="*" />
+                                            <DataGridTextColumn Header="City" Binding="{Binding City}" Width="130" />
+                                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+                                            <DataGridTextColumn Header="Due" Binding="{Binding DueDate, StringFormat=d}" Width="110" />
+                                            <DataGridTextColumn Header="Total" Binding="{Binding Total, StringFormat=C}" Width="110" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+
+                            <Border Grid.Column="1" Style="{StaticResource SectionBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="Order Details" FontSize="18" FontWeight="Bold" />
+                                    <TextBlock Text="Fields update when a row is selected." Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,12" />
+                                    <TextBlock x:Name="SelectedOrderTextBlock"
+                                               Text="Selected order: ORD-1042"
+                                               Foreground="#195C7A"
+                                               FontWeight="SemiBold"
+                                               Margin="0,0,0,10"
+                                               AutomationProperties.Name="Selected Order Text" />
+
+                                    <TextBlock Text="Customer" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBox x:Name="CustomerTextBox" Height="32" Margin="0,2,0,10" Padding="8,4" AutomationProperties.Name="Customer Name Textbox" />
+
+                                    <TextBlock Text="Assigned To" Style="{StaticResource CaptionTextStyle}" />
+                                    <ComboBox x:Name="AssignedToComboBox" Height="32" Margin="0,2,0,10" AutomationProperties.Name="Assigned To ComboBox">
+                                        <ComboBoxItem Content="Anika Rao" />
+                                        <ComboBoxItem Content="Michael Chen" />
+                                        <ComboBoxItem Content="Priya Shah" />
+                                        <ComboBoxItem Content="Jordan Smith" />
+                                    </ComboBox>
+
+                                    <TextBlock Text="Priority" Style="{StaticResource CaptionTextStyle}" />
+                                    <Slider x:Name="PrioritySlider" Minimum="1" Maximum="5" TickFrequency="1" IsSnapToTickEnabled="True" Value="3" Margin="0,2,0,10" AutomationProperties.Name="Priority Slider" />
+
+                                    <TextBlock Text="Notes" Style="{StaticResource CaptionTextStyle}" />
+                                    <TextBox x:Name="NotesTextBox" Height="78" AcceptsReturn="True" TextWrapping="Wrap" Padding="8" Text="Customer requested delivery before Friday." AutomationProperties.Name="Order Notes Textbox" />
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                        <Button Content="Approve" Style="{StaticResource PrimaryButtonStyle}" Click="ApproveButton_Click" AutomationProperties.Name="Approve Order Button" />
+                                        <Button Content="Hold" Click="HoldButton_Click" AutomationProperties.Name="Put Order On Hold Button" />
+                                        <Button Content="Cancel" Style="{StaticResource DangerButtonStyle}" Click="CancelButton_Click" AutomationProperties.Name="Cancel Order Button" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <TabControl x:Name="MainTabControl" AutomationProperties.Name="Main Content Tab Control">
+                            <TabItem Header="Inventory" AutomationProperties.Name="Inventory Tab">
+                                <Border Style="{StaticResource SectionBorderStyle}" BorderThickness="0" CornerRadius="0">
+                                    <DataGrid x:Name="InventoryDataGrid" Height="220" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" AutomationProperties.Name="Inventory Data Grid">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="120" />
+                                            <DataGridTextColumn Header="Item" Binding="{Binding ItemName}" Width="*" />
+                                            <DataGridTextColumn Header="Warehouse" Binding="{Binding Warehouse}" Width="140" />
+                                            <DataGridTextColumn Header="On Hand" Binding="{Binding OnHand}" Width="100" />
+                                            <DataGridTextColumn Header="Reorder At" Binding="{Binding ReorderAt}" Width="100" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                            </TabItem>
+                            <TabItem Header="Team Tasks" AutomationProperties.Name="Team Tasks Tab">
+                                <Grid Margin="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="260" />
+                                    </Grid.ColumnDefinitions>
+                                    <ListView x:Name="TasksListView" Grid.Column="0" Height="220" AutomationProperties.Name="Team Tasks List">
+                                        <ListView.View>
+                                            <GridView>
+                                                <GridViewColumn Header="Task" DisplayMemberBinding="{Binding Title}" Width="260" />
+                                                <GridViewColumn Header="Owner" DisplayMemberBinding="{Binding Owner}" Width="150" />
+                                                <GridViewColumn Header="State" DisplayMemberBinding="{Binding State}" Width="120" />
+                                                <GridViewColumn Header="Due" DisplayMemberBinding="{Binding Due}" Width="120" />
+                                            </GridView>
+                                        </ListView.View>
+                                    </ListView>
+                                    <StackPanel Grid.Column="1" Margin="14,0,0,0">
+                                        <TextBlock Text="Quick Task" FontWeight="Bold" FontSize="16" />
+                                        <TextBox x:Name="NewTaskTextBox" Height="32" Margin="0,8" Padding="8,4" Text="Call supplier" AutomationProperties.Name="New Task Textbox" />
+                                        <Button Content="Add Task" Style="{StaticResource PrimaryButtonStyle}" Click="AddTaskButton_Click" AutomationProperties.Name="Add Task Button" />
+                                        <Button Content="Mark Done" Click="MarkTaskDoneButton_Click" AutomationProperties.Name="Mark Task Done Button" />
+                                        <Button Content="Remove Task" Style="{StaticResource DangerButtonStyle}" Click="RemoveTaskButton_Click" AutomationProperties.Name="Remove Task Button" />
+                                    </StackPanel>
+                                </Grid>
+                            </TabItem>
+                            <TabItem Header="Settings" AutomationProperties.Name="Settings Tab">
+                                <Grid Margin="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="280" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Preferences" FontWeight="Bold" FontSize="16" />
+                                        <RadioButton Content="Compact density" GroupName="Density" Margin="0,10,0,4" AutomationProperties.Name="Compact Density Radio Button" />
+                                        <RadioButton Content="Comfortable density" GroupName="Density" IsChecked="True" Margin="0,4" AutomationProperties.Name="Comfortable Density Radio Button" />
+                                        <RadioButton Content="Large touch targets" GroupName="Density" Margin="0,4" AutomationProperties.Name="Large Touch Targets Radio Button" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Notification Channels" FontWeight="Bold" FontSize="16" />
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <CheckBox Content="Email" IsChecked="True" Margin="0,0,18,0" AutomationProperties.Name="Email Notifications Checkbox" />
+                                            <CheckBox Content="SMS" Margin="0,0,18,0" AutomationProperties.Name="SMS Notifications Checkbox" />
+                                            <CheckBox Content="Desktop Alert" IsChecked="True" Margin="0,0,18,0" AutomationProperties.Name="Desktop Alert Checkbox" />
+                                            <CheckBox Content="Webhook" AutomationProperties.Name="Webhook Notifications Checkbox" />
+                                        </WrapPanel>
+                                        <TextBlock Text="Daily summary date" Margin="0,18,0,6" Style="{StaticResource CaptionTextStyle}" />
+                                        <DatePicker x:Name="SummaryDatePicker" Width="180" HorizontalAlignment="Left" SelectedDate="{x:Static sys:DateTime.Today}" AutomationProperties.Name="Summary Date Picker" />
+                                    </StackPanel>
+                                </Grid>
+                            </TabItem>
+                        </TabControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
