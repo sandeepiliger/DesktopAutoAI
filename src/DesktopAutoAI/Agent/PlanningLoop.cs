@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -69,7 +71,7 @@ public sealed class PlanningLoop
             if (ct.IsCancellationRequested)
                 return Finish(LoopOutcome.Cancelled, step - 1, "Cancelled by user.", history, totalSw);
 
-            var (treeJson, shotBytes) = CaptureWorld(step);
+            var (treeJson, shotBytes) = await CaptureWorldAsync(step, ct);
 
             Log.Information("--- step {Step}/{Max} ({Provider}/{Model}) ---",
                 step, _maxSteps, _planner.ProviderName, _planner.ModelId);
@@ -132,13 +134,13 @@ public sealed class PlanningLoop
             $"Hit step limit ({_maxSteps}) without finishing.", history, totalSw);
     }
 
-    private (string TreeJson, byte[] ShotBytes) CaptureWorld(int step)
+    private async Task<(string TreeJson, byte[] ShotBytes)> CaptureWorldAsync(int step, CancellationToken ct)
     {
         var tree = UiaTreeDumper.Dump(_session.TargetWindow);
         var treeJson = JsonSerializer.Serialize(tree, JsonOpts);
         File.WriteAllText(Path.Combine(_outDir, $"tree-{step:D2}.json"), treeJson);
 
-        var rect = _session.TargetWindow.BoundingRectangle;
+        var rect = await WaitForValidBoundsAsync(ct);
         var shotPath = Path.Combine(_outDir, $"shot-{step:D2}.png");
         ScreenCapture.CapturePng(rect, shotPath);
         var bytes = ScreenCapture.ReadAndDownscalePng(shotPath, _screenshotMaxEdge);
@@ -147,6 +149,31 @@ public sealed class PlanningLoop
             step, treeJson.Length, bytes.Length / 1024, rect.Width, rect.Height);
         return (treeJson, bytes);
     }
+
+    // After a dialog closes the target window can briefly report 0x0 bounds while
+    // it repaints/activates. Retry with short back-off before falling back to the
+    // primary screen dimensions so the loop can continue rather than crashing.
+    private async Task<Rectangle> WaitForValidBoundsAsync(CancellationToken ct)
+    {
+        int[] delays = { 150, 300, 600, 1200 };
+        foreach (var ms in delays)
+        {
+            var r = _session.TargetWindow.BoundingRectangle;
+            if (r.Width > 0 && r.Height > 0) return r;
+            Log.Debug("Window bounds are 0x0; waiting {Ms}ms to settle", ms);
+            await Task.Delay(ms, ct);
+        }
+        var final = _session.TargetWindow.BoundingRectangle;
+        if (final.Width > 0 && final.Height > 0) return final;
+
+        var sw = GetSystemMetrics(0);  // SM_CXSCREEN
+        var sh = GetSystemMetrics(1);  // SM_CYSCREEN
+        Log.Warning("Window bounds still 0x0 after retries; capturing primary screen ({W}x{H})", sw, sh);
+        return new Rectangle(0, 0, sw, sh);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
 
     private ExecutionResult ExecuteWithRetry(AgentAction action, CancellationToken ct)
     {
