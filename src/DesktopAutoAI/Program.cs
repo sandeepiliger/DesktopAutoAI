@@ -367,14 +367,23 @@ internal static class Program
 
             // 3. On a successful live run, record the winning path so the next
             //    invocation with the same goal can replay it without an LLM call.
+            //    Skip the save if any step typed into a password field - we
+            //    don't want a redacted-or-real password sitting in the cache.
             if (result.Outcome == LoopOutcome.Done && !noCache)
             {
-                var winning = result.History
-                    .Where(h => h.Result.StartsWith("ok", StringComparison.OrdinalIgnoreCase)
-                             || h.Result.StartsWith("done", StringComparison.OrdinalIgnoreCase))
-                    .Select(h => h.Action)
-                    .ToList();
-                cache.Save(process!, goal!, winning);
+                if (result.ContainsPasswordFields)
+                {
+                    Log.Warning("Run typed into a password field; skipping cache save to avoid persisting credentials.");
+                }
+                else
+                {
+                    var winning = result.History
+                        .Where(h => h.Result.StartsWith("ok", StringComparison.OrdinalIgnoreCase)
+                                 || h.Result.StartsWith("done", StringComparison.OrdinalIgnoreCase))
+                        .Select(h => h.Action)
+                        .ToList();
+                    cache.Save(process!, goal!, winning);
+                }
             }
 
             return result.Outcome switch
