@@ -4,6 +4,7 @@ public sealed class AppSettings
 {
     public LoggingSettings Logging { get; set; } = new();
     public PlannerSettings Planner { get; set; } = new();
+    public SafetySettings Safety { get; set; } = new();
 }
 
 public sealed class LoggingSettings
@@ -38,4 +39,25 @@ public sealed class GoogleSettings
     /// Leave null to use the SDK's default.
     /// </summary>
     public string? ApiVersion { get; set; }
+}
+
+public sealed class SafetySettings
+{
+    /// <summary>Master switch for destructive-action detection + prompt.
+    /// Kill switch is governed independently.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Register the global abort hotkey at startup.</summary>
+    public bool KillSwitchEnabled { get; set; } = true;
+
+    /// <summary>Global hotkey that signals cancellation. Examples:
+    /// "Ctrl+Shift+Backspace", "Alt+F12", "Win+Pause".</summary>
+    public string KillSwitchHotkey { get; set; } = "Ctrl+Shift+Backspace";
+
+    /// <summary>Override the regex list used by DestructiveDetector. Empty
+    /// list = use built-in defaults (delete/remove/send/submit/drop/...).</summary>
+    public List<string> DestructivePatterns { get; set; } = new();
+
+    /// <summary>How long the confirmation prompt waits before auto-denying.</summary>
+    public int ConfirmationTimeoutSeconds { get; set; } = 15;
 }
