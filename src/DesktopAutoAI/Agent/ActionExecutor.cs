@@ -9,7 +9,10 @@ namespace DesktopAutoAI.Agent;
 
 public enum ExecutionStatus { Ok, Done, Failed }
 
-public sealed record ExecutionResult(ExecutionStatus Status, string Message);
+public sealed record ExecutionResult(
+    ExecutionStatus Status,
+    string Message,
+    bool WasPasswordField = false);
 
 [SupportedOSPlatform("windows")]
 public sealed class ActionExecutor
@@ -52,6 +55,8 @@ public sealed class ActionExecutor
         var el = UiaElementResolver.Resolve(_root, a.Selector);
         if (el is null) return Fail("Element not found for invoke.");
 
+        TryScrollIntoView(el);
+
         if (el.Patterns.Invoke.IsSupported)
         {
             el.Patterns.Invoke.Pattern.Invoke();
@@ -81,16 +86,21 @@ public sealed class ActionExecutor
     private ExecutionResult DoType(AgentAction a)
     {
         if (string.IsNullOrEmpty(a.Text)) return Fail("type requires non-empty text.");
+
+        bool isPassword = false;
         if (a.Selector is not null)
         {
             var el = UiaElementResolver.Resolve(_root, a.Selector);
             if (el is null) return Fail("Element not found for type.");
+
+            isPassword = IsPasswordField(el);
+
             if (el.Patterns.Value.IsSupported)
             {
                 try
                 {
                     el.Patterns.Value.Pattern.SetValue(a.Text);
-                    return Ok("Set value via Value pattern.");
+                    return TypedOk("Set value via Value pattern.", a.Text.Length, isPassword);
                 }
                 catch (Exception ex)
                 {
@@ -100,7 +110,36 @@ public sealed class ActionExecutor
             el.Focus();
         }
         Keyboard.Type(a.Text);
-        return Ok($"Typed {a.Text!.Length} chars.");
+        return TypedOk(null, a.Text.Length, isPassword);
+    }
+
+    private static ExecutionResult TypedOk(string? prefix, int charCount, bool isPassword)
+    {
+        var msg = isPassword
+            ? $"Typed *** chars (password field; text redacted in logs)."
+            : (prefix is null ? $"Typed {charCount} chars." : $"{prefix} Typed {charCount} chars.");
+        return new ExecutionResult(ExecutionStatus.Ok, msg, WasPasswordField: isPassword);
+    }
+
+    private static bool IsPasswordField(AutomationElement el)
+    {
+        try { return el.Properties.IsPassword.ValueOrDefault; }
+        catch { return false; }
+    }
+
+    // Realises the element in a virtualised container (ListView / DataGrid)
+    // before we click it. Cheap when supported, no-op otherwise.
+    private static void TryScrollIntoView(AutomationElement el)
+    {
+        try
+        {
+            if (el.Patterns.ScrollItem.IsSupported)
+                el.Patterns.ScrollItem.Pattern.ScrollIntoView();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "ScrollIntoView failed; continuing anyway.");
+        }
     }
 
     private ExecutionResult DoSelect(AgentAction a)
@@ -109,6 +148,8 @@ public sealed class ActionExecutor
         if (string.IsNullOrEmpty(a.Value)) return Fail("select requires a value.");
         var el = UiaElementResolver.Resolve(_root, a.Selector);
         if (el is null) return Fail("Element not found for select.");
+
+        TryScrollIntoView(el);
 
         if (el is ComboBox combo)
         {
