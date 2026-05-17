@@ -6,6 +6,7 @@ using DesktopAutoAI.Agent;
 using DesktopAutoAI.Configuration;
 using DesktopAutoAI.Logging;
 using DesktopAutoAI.Providers;
+using DesktopAutoAI.Skills;
 using DesktopAutoAI.Uia;
 using Microsoft.Extensions.Configuration;
 using Serilog;
@@ -211,6 +212,7 @@ internal static class Program
         string? goal = null;
         string outDir = ".\\out";
         int? maxStepsOverride = null;
+        bool noCache = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -224,6 +226,8 @@ internal static class Program
                     outDir = args[++i]; break;
                 case "--max-steps" when i + 1 < args.Length:
                     maxStepsOverride = int.Parse(args[++i]); break;
+                case "--no-cache":
+                    noCache = true; break;
                 default:
                     Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
                     return 1;
@@ -238,6 +242,8 @@ internal static class Program
             return 1;
         }
 
+        Directory.CreateDirectory(outDir);
+
         IActionPlanner planner;
         try { planner = PlannerFactory.Create(settings.Planner); }
         catch (Exception ex) { Log.Error(ex, "Failed to create planner"); return 1; }
@@ -248,8 +254,47 @@ internal static class Program
         Log.Information("Attached. Window title: {Title}", session.TargetWindow.Title);
 
         var maxSteps = maxStepsOverride ?? settings.Planner.MaxSteps;
-        Log.Information("Loop config: max_steps={MaxSteps}, out_dir={OutDir}", maxSteps, Path.GetFullPath(outDir));
+        var cache = new SkillsCache();
+        Log.Information("Loop config: max_steps={MaxSteps}, out_dir={OutDir}, cache={CacheState}",
+            maxSteps, Path.GetFullPath(outDir), noCache ? "disabled" : cache.Directory);
 
+        // 1. Try a cached skill first (skipped when --no-cache).
+        if (!noCache)
+        {
+            var skill = cache.TryLoad(process!, goal!);
+            if (skill is not null && skill.Actions.Count > 0)
+            {
+                Log.Information("Skills cache HIT for goal '{Goal}' ({Count} action(s), {Successes} prior run(s)). Replaying.",
+                    goal, skill.Actions.Count, skill.SuccessCount);
+
+                var replayer = new SkillReplayer(new ActionExecutor(session.TargetWindow));
+                var replay = await replayer.ReplayAsync(skill.Actions, CancellationToken.None);
+                if (replay.Succeeded)
+                {
+                    cache.Save(process!, goal!, skill.Actions);  // bump LastUsedAt + SuccessCount
+                    File.WriteAllText(
+                        Path.Combine(outDir, "history.json"),
+                        JsonSerializer.Serialize(new
+                        {
+                            outcome = "ReplayedFromCache",
+                            steps = replay.StepsRun,
+                            message = replay.Message,
+                            cache_key = skill.CacheKey,
+                        }, JsonOpts));
+                    Log.Information("Replay finished cleanly in {Steps} step(s). No LLM call made.", replay.StepsRun);
+                    return 0;
+                }
+
+                Log.Information("Replay failed at step {Step}: {Msg}. Falling back to live planning.",
+                    replay.StepsRun + 1, replay.Message);
+            }
+            else
+            {
+                Log.Information("Skills cache MISS for goal '{Goal}'. Running live planner.", goal);
+            }
+        }
+
+        // 2. Live planning loop (M3).
         var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir);
         var result = await loop.RunAsync(goal!, CancellationToken.None);
 
@@ -262,6 +307,18 @@ internal static class Program
                 message = result.Message,
                 history = result.History,
             }, JsonOpts));
+
+        // 3. On a successful live run, record the winning path so the next
+        //    invocation with the same goal can replay it without an LLM call.
+        if (result.Outcome == LoopOutcome.Done && !noCache)
+        {
+            var winning = result.History
+                .Where(h => h.Result.StartsWith("ok", StringComparison.OrdinalIgnoreCase)
+                         || h.Result.StartsWith("done", StringComparison.OrdinalIgnoreCase))
+                .Select(h => h.Action)
+                .ToList();
+            cache.Save(process!, goal!, winning);
+        }
 
         return result.Outcome switch
         {
@@ -319,13 +376,15 @@ internal static class Program
                 ANTHROPIC_API_KEY (or the provider's key) in the environment.
                 --dry-run prints the action without executing.
 
-              run --process <name> --goal "..." [--out <dir>] [--max-steps N]
-                Multi-step planning loop. Each step re-captures tree + screenshot,
-                asks the planner, executes, appends to history. Stops when the
-                planner says 'done' / 'fail', the step limit is reached, or
-                the planner / executor errors out. Per-step artifacts
-                (tree-NN.json, shot-NN.png, action-NN.json) land in <out>, plus
-                a final history.json.
+              run --process <name> --goal "..." [--out <dir>] [--max-steps N] [--no-cache]
+                Multi-step planning loop. First checks the skills cache
+                (%LOCALAPPDATA%\DesktopAutoAI\skills) for a previously successful
+                action sequence for this (app, goal) pair - on hit it replays
+                without any LLM call. On miss or replay failure it falls back to
+                live planning, and saves the winning path on success. Pass
+                --no-cache to skip the cache and force live planning. Per-step
+                artifacts (tree-NN.json, shot-NN.png, action-NN.json) land in
+                <out>, plus a final history.json.
 
               ping
                 Send a trivial "say pong" request to the configured planner.
