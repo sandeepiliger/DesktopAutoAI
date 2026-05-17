@@ -6,6 +6,7 @@ using DesktopAutoAI.Agent;
 using DesktopAutoAI.Configuration;
 using DesktopAutoAI.Logging;
 using DesktopAutoAI.Providers;
+using DesktopAutoAI.Safety;
 using DesktopAutoAI.Skills;
 using DesktopAutoAI.Uia;
 using Microsoft.Extensions.Configuration;
@@ -213,6 +214,8 @@ internal static class Program
         string outDir = ".\\out";
         int? maxStepsOverride = null;
         bool noCache = false;
+        bool noSafety = false;
+        bool autoYes = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -228,6 +231,10 @@ internal static class Program
                     maxStepsOverride = int.Parse(args[++i]); break;
                 case "--no-cache":
                     noCache = true; break;
+                case "--no-safety":
+                    noSafety = true; break;
+                case "--yes":
+                    autoYes = true; break;
                 default:
                     Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
                     return 1;
@@ -255,80 +262,136 @@ internal static class Program
 
         var maxSteps = maxStepsOverride ?? settings.Planner.MaxSteps;
         var cache = new SkillsCache();
-        Log.Information("Loop config: max_steps={MaxSteps}, out_dir={OutDir}, cache={CacheState}",
-            maxSteps, Path.GetFullPath(outDir), noCache ? "disabled" : cache.Directory);
 
-        // 1. Try a cached skill first (skipped when --no-cache).
-        if (!noCache)
+        // Build the safety pieces. Kill switch always runs (unless disabled
+        // in config or via --no-safety); destructive detector + prompt
+        // respect both the master Safety.Enabled flag and --no-safety.
+        var safetyOn = settings.Safety.Enabled && !noSafety;
+        KillSwitch? killSwitch = null;
+        if (settings.Safety.KillSwitchEnabled && !noSafety)
         {
-            var skill = cache.TryLoad(process!, goal!);
-            if (skill is not null && skill.Actions.Count > 0)
+            try { killSwitch = new KillSwitch(settings.Safety.KillSwitchHotkey); }
+            catch (Exception ex)
             {
-                Log.Information("Skills cache HIT for goal '{Goal}' ({Count} action(s), {Successes} prior run(s)). Replaying.",
-                    goal, skill.Actions.Count, skill.SuccessCount);
+                Log.Warning(ex, "Could not start kill switch ({Hotkey}); continuing without it.",
+                    settings.Safety.KillSwitchHotkey);
+            }
+        }
 
-                var replayer = new SkillReplayer(new ActionExecutor(session.TargetWindow));
-                var replay = await replayer.ReplayAsync(skill.Actions, CancellationToken.None);
-                if (replay.Succeeded)
+        SafetyGate? safetyGate = null;
+        if (safetyOn)
+        {
+            var detector = new DestructiveDetector(settings.Safety.DestructivePatterns);
+            var prompt = new ConfirmationPrompt(
+                TimeSpan.FromSeconds(settings.Safety.ConfirmationTimeoutSeconds),
+                autoConfirm: autoYes);
+            safetyGate = new SafetyGate(detector, prompt, enabled: true);
+        }
+
+        var ct = killSwitch?.Token ?? CancellationToken.None;
+
+        Log.Information(
+            "Loop config: max_steps={MaxSteps}, out_dir={OutDir}, cache={CacheState}, safety={SafetyState}, kill_switch={KillSwitch}",
+            maxSteps, Path.GetFullPath(outDir),
+            noCache ? "disabled" : cache.Directory,
+            safetyGate is null ? "disabled" : (autoYes ? "auto-confirm" : "prompt"),
+            killSwitch?.Hotkey ?? "disabled");
+
+        try
+        {
+            // 1. Try a cached skill first (skipped when --no-cache).
+            if (!noCache)
+            {
+                var skill = cache.TryLoad(process!, goal!);
+                if (skill is not null && skill.Actions.Count > 0)
                 {
-                    cache.Save(process!, goal!, skill.Actions);  // bump LastUsedAt + SuccessCount
-                    File.WriteAllText(
-                        Path.Combine(outDir, "history.json"),
-                        JsonSerializer.Serialize(new
-                        {
-                            outcome = "ReplayedFromCache",
-                            steps = replay.StepsRun,
-                            message = replay.Message,
-                            cache_key = skill.CacheKey,
-                        }, JsonOpts));
-                    Log.Information("Replay finished cleanly in {Steps} step(s). No LLM call made.", replay.StepsRun);
-                    return 0;
+                    Log.Information("Skills cache HIT for goal '{Goal}' ({Count} action(s), {Successes} prior run(s)). Replaying.",
+                        goal, skill.Actions.Count, skill.SuccessCount);
+
+                    var replayer = new SkillReplayer(new ActionExecutor(session.TargetWindow), safetyGate);
+                    ReplayResult replay;
+                    try
+                    {
+                        replay = await replayer.ReplayAsync(skill.Actions, ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Log.Warning("Replay cancelled.");
+                        return 130;
+                    }
+
+                    if (replay.Succeeded)
+                    {
+                        cache.Save(process!, goal!, skill.Actions);
+                        File.WriteAllText(
+                            Path.Combine(outDir, "history.json"),
+                            JsonSerializer.Serialize(new
+                            {
+                                outcome = "ReplayedFromCache",
+                                steps = replay.StepsRun,
+                                message = replay.Message,
+                                cache_key = skill.CacheKey,
+                            }, JsonOpts));
+                        Log.Information("Replay finished cleanly in {Steps} step(s). No LLM call made.", replay.StepsRun);
+                        return 0;
+                    }
+
+                    if (replay.Denied)
+                    {
+                        Log.Warning("Replay aborted by user denial; not falling back to live planner.");
+                        return 5;
+                    }
+
+                    Log.Information("Replay failed at step {Step}: {Msg}. Falling back to live planning.",
+                        replay.StepsRun + 1, replay.Message);
                 }
-
-                Log.Information("Replay failed at step {Step}: {Msg}. Falling back to live planning.",
-                    replay.StepsRun + 1, replay.Message);
+                else
+                {
+                    Log.Information("Skills cache MISS for goal '{Goal}'. Running live planner.", goal);
+                }
             }
-            else
+
+            // 2. Live planning loop (M3 + M5 safety gate).
+            var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate);
+            var result = await loop.RunAsync(goal!, ct);
+
+            File.WriteAllText(
+                Path.Combine(outDir, "history.json"),
+                JsonSerializer.Serialize(new
+                {
+                    outcome = result.Outcome.ToString(),
+                    steps = result.StepsTaken,
+                    message = result.Message,
+                    history = result.History,
+                }, JsonOpts));
+
+            // 3. On a successful live run, record the winning path so the next
+            //    invocation with the same goal can replay it without an LLM call.
+            if (result.Outcome == LoopOutcome.Done && !noCache)
             {
-                Log.Information("Skills cache MISS for goal '{Goal}'. Running live planner.", goal);
+                var winning = result.History
+                    .Where(h => h.Result.StartsWith("ok", StringComparison.OrdinalIgnoreCase)
+                             || h.Result.StartsWith("done", StringComparison.OrdinalIgnoreCase))
+                    .Select(h => h.Action)
+                    .ToList();
+                cache.Save(process!, goal!, winning);
             }
-        }
 
-        // 2. Live planning loop (M3).
-        var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir);
-        var result = await loop.RunAsync(goal!, CancellationToken.None);
-
-        File.WriteAllText(
-            Path.Combine(outDir, "history.json"),
-            JsonSerializer.Serialize(new
+            return result.Outcome switch
             {
-                outcome = result.Outcome.ToString(),
-                steps = result.StepsTaken,
-                message = result.Message,
-                history = result.History,
-            }, JsonOpts));
-
-        // 3. On a successful live run, record the winning path so the next
-        //    invocation with the same goal can replay it without an LLM call.
-        if (result.Outcome == LoopOutcome.Done && !noCache)
-        {
-            var winning = result.History
-                .Where(h => h.Result.StartsWith("ok", StringComparison.OrdinalIgnoreCase)
-                         || h.Result.StartsWith("done", StringComparison.OrdinalIgnoreCase))
-                .Select(h => h.Action)
-                .ToList();
-            cache.Save(process!, goal!, winning);
+                LoopOutcome.Done => 0,
+                LoopOutcome.Failed => 2,
+                LoopOutcome.MaxSteps => 3,
+                LoopOutcome.PlannerError => 4,
+                LoopOutcome.Denied => 5,
+                LoopOutcome.Cancelled => 130,
+                _ => 1,
+            };
         }
-
-        return result.Outcome switch
+        finally
         {
-            LoopOutcome.Done => 0,
-            LoopOutcome.Failed => 2,
-            LoopOutcome.MaxSteps => 3,
-            LoopOutcome.PlannerError => 4,
-            LoopOutcome.Cancelled => 130,
-            _ => 1,
-        };
+            killSwitch?.Dispose();
+        }
     }
 
     private static async Task<int> PingCommand(string[] args, AppSettings settings)
@@ -376,15 +439,24 @@ internal static class Program
                 ANTHROPIC_API_KEY (or the provider's key) in the environment.
                 --dry-run prints the action without executing.
 
-              run --process <name> --goal "..." [--out <dir>] [--max-steps N] [--no-cache]
+              run --process <name> --goal "..." [--out <dir>] [--max-steps N]
+                  [--no-cache] [--no-safety] [--yes]
                 Multi-step planning loop. First checks the skills cache
                 (%LOCALAPPDATA%\DesktopAutoAI\skills) for a previously successful
                 action sequence for this (app, goal) pair - on hit it replays
                 without any LLM call. On miss or replay failure it falls back to
-                live planning, and saves the winning path on success. Pass
-                --no-cache to skip the cache and force live planning. Per-step
-                artifacts (tree-NN.json, shot-NN.png, action-NN.json) land in
-                <out>, plus a final history.json.
+                live planning, and saves the winning path on success. The run
+                is gated by the safety layer: a global kill-switch hotkey
+                (default Ctrl+Shift+Backspace) aborts immediately, and any
+                destructive action (delete / send / submit / etc.) requires
+                console confirmation before it executes.
+                  --no-cache     Skip cache lookup and skip saving on success.
+                  --no-safety    Disable both the kill switch and the
+                                 destructive-action prompt for this run.
+                  --yes          Auto-confirm every destructive prompt. Use
+                                 only when you trust the goal and the model.
+                Per-step artifacts (tree-NN.json, shot-NN.png, action-NN.json)
+                land in <out>, plus a final history.json.
 
               ping
                 Send a trivial "say pong" request to the configured planner.

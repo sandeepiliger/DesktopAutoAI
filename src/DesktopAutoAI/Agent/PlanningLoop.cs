@@ -5,13 +5,14 @@ using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DesktopAutoAI.Providers;
+using DesktopAutoAI.Safety;
 using DesktopAutoAI.Uia;
 using FlaUI.Core.Exceptions;
 using Serilog;
 
 namespace DesktopAutoAI.Agent;
 
-public enum LoopOutcome { Done, Failed, MaxSteps, PlannerError, Cancelled }
+public enum LoopOutcome { Done, Failed, MaxSteps, PlannerError, Cancelled, Denied }
 
 public sealed record LoopResult(
     LoopOutcome Outcome,
@@ -38,6 +39,7 @@ public sealed class PlanningLoop
     private readonly IActionPlanner _planner;
     private readonly UiaSession _session;
     private readonly ActionExecutor _executor;
+    private readonly SafetyGate? _safety;
     private readonly int _maxSteps;
     private readonly int _screenshotMaxEdge;
     private readonly string _outDir;
@@ -49,11 +51,13 @@ public sealed class PlanningLoop
         int maxSteps,
         int screenshotMaxEdge,
         string outDir,
+        SafetyGate? safety = null,
         int postActionSettleMs = 150)
     {
         _planner = planner;
         _session = session;
         _executor = new ActionExecutor(session.TargetWindow);
+        _safety = safety;
         _maxSteps = maxSteps > 0 ? maxSteps : 25;
         _screenshotMaxEdge = screenshotMaxEdge > 0 ? screenshotMaxEdge : 1280;
         _outDir = outDir;
@@ -97,6 +101,28 @@ public sealed class PlanningLoop
             var marker = planned.IsDestructive ? " [destructive!]" : "";
             Log.Information("step {Step}: {Type}{Marker} -- {Thought}",
                 step, planned.Action.Type, marker, planned.Thought);
+
+            if (_safety is not null)
+            {
+                bool allowed;
+                try
+                {
+                    allowed = await _safety.AllowAsync(
+                        planned.Action, planned.IsDestructive, planned.Thought, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return Finish(LoopOutcome.Cancelled, step - 1,
+                        "Cancelled while awaiting confirmation.", history, totalSw);
+                }
+                if (!allowed)
+                {
+                    history.Add(new HistoryEntry(step, planned.Thought, planned.Action,
+                        "denied: user declined destructive action"));
+                    return Finish(LoopOutcome.Denied, step,
+                        "User denied a destructive action.", history, totalSw);
+                }
+            }
 
             var result = ExecuteWithRetry(planned.Action, ct);
             Log.Information("step {Step}: {Status} -- {Message}", step, result.Status, result.Message);
