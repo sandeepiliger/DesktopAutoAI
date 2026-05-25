@@ -54,6 +54,7 @@ public sealed class PlanningLoop
     private readonly int _screenshotMaxEdge;
     private readonly string _outDir;
     private readonly int _postActionSettleMs;
+    private readonly bool _includeScreenshot;
 
     public PlanningLoop(
         IActionPlanner planner,
@@ -63,11 +64,13 @@ public sealed class PlanningLoop
         string outDir,
         SafetyGate? safety = null,
         int postActionSettleMs = 150,
-        int historyWindow = 10)
+        int historyWindow = 10,
+        bool includeScreenshot = true)
     {
         _planner = planner;
         _session = session;
-        _executor = new ActionExecutor(session.TargetWindow);
+        _includeScreenshot = includeScreenshot;
+        _executor = new ActionExecutor(session.TargetWindow, treeOnly: !includeScreenshot);
         _safety = safety;
         _maxSteps = maxSteps > 0 ? maxSteps : 25;
         _historyWindow = historyWindow > 0 ? historyWindow : 10;
@@ -187,12 +190,19 @@ public sealed class PlanningLoop
             $"Hit step limit ({_maxSteps}) without finishing.", history, totalSw, containsPassword);
     }
 
-    private async Task<(string TreeJson, byte[] ShotBytes)> CaptureWorldAsync(int step, CancellationToken ct)
+    private async Task<(string TreeJson, byte[]? ShotBytes)> CaptureWorldAsync(int step, CancellationToken ct)
     {
         var tree = UiaTreeDumper.Dump(_session.TargetWindow);
         var treeJson = JsonSerializer.Serialize(tree, TreeJsonOpts);
         File.WriteAllText(Path.Combine(_outDir, $"tree-{step:D2}.json"),
             JsonSerializer.Serialize(tree, JsonOpts));
+
+        if (!_includeScreenshot)
+        {
+            Log.Debug("step {Step} capture: tree={TreeChars} chars, screenshot=off (tree-only mode)",
+                step, treeJson.Length);
+            return (treeJson, null);
+        }
 
         var rect = await WaitForValidBoundsAsync(ct);
         var shotPath = Path.Combine(_outDir, $"shot-{step:D2}.png");

@@ -111,6 +111,7 @@ internal static class Program
         string? goal = null;
         string outDir = ".\\out";
         bool dryRun = false;
+        bool noScreenshot = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -124,6 +125,8 @@ internal static class Program
                     outDir = args[++i]; break;
                 case "--dry-run":
                     dryRun = true; break;
+                case "--no-screenshot":
+                    noScreenshot = true; break;
                 default:
                     Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
                     return 1;
@@ -143,14 +146,15 @@ internal static class Program
         IActionPlanner planner;
         try
         {
-            planner = PlannerFactory.Create(settings.Planner);
+            planner = PlannerFactory.Create(settings.Planner, treeOnly: noScreenshot);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to create planner");
             return 1;
         }
-        Log.Information("Planner: {Provider} / {Model}", planner.ProviderName, planner.ModelId);
+        Log.Information("Planner: {Provider} / {Model} (screenshot={ScreenshotState})",
+            planner.ProviderName, planner.ModelId, noScreenshot ? "off" : "on");
 
         Log.Information("Attaching to process {Process}", process);
         using var session = UiaSession.Attach(process);
@@ -165,12 +169,20 @@ internal static class Program
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         });
 
-        var rect = session.TargetWindow.BoundingRectangle;
-        var shotPath = Path.Combine(outDir, "shot.png");
-        ScreenCapture.CapturePng(rect, shotPath);
-        var shotBytes = ScreenCapture.ReadAndDownscalePng(shotPath, maxEdge: 1280);
-        Log.Information("Screenshot: {W}x{H} on disk, {Kb} KB to LLM (downscaled to 1280px max edge)",
-            rect.Width, rect.Height, shotBytes.Length / 1024);
+        byte[]? shotBytes = null;
+        if (!noScreenshot)
+        {
+            var rect = session.TargetWindow.BoundingRectangle;
+            var shotPath = Path.Combine(outDir, "shot.png");
+            ScreenCapture.CapturePng(rect, shotPath);
+            shotBytes = ScreenCapture.ReadAndDownscalePng(shotPath, maxEdge: 1280);
+            Log.Information("Screenshot: {W}x{H} on disk, {Kb} KB to LLM (downscaled to 1280px max edge)",
+                rect.Width, rect.Height, shotBytes.Length / 1024);
+        }
+        else
+        {
+            Log.Information("Screenshot disabled (--no-screenshot). Sending UIA tree only.");
+        }
 
         var request = new PlanRequest(
             Goal: goal!,
@@ -205,7 +217,7 @@ internal static class Program
             return 0;
         }
 
-        var executor = new ActionExecutor(session.TargetWindow);
+        var executor = new ActionExecutor(session.TargetWindow, treeOnly: noScreenshot);
         var result = executor.Execute(planned.Action, CancellationToken.None);
         Log.Information("Result : {Status} - {Message}", result.Status, result.Message);
 
@@ -221,6 +233,7 @@ internal static class Program
         bool noCache = false;
         bool noSafety = false;
         bool autoYes = false;
+        bool noScreenshot = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -240,6 +253,8 @@ internal static class Program
                     noSafety = true; break;
                 case "--yes":
                     autoYes = true; break;
+                case "--no-screenshot":
+                    noScreenshot = true; break;
                 default:
                     Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
                     return 1;
@@ -257,9 +272,10 @@ internal static class Program
         Directory.CreateDirectory(outDir);
 
         IActionPlanner planner;
-        try { planner = PlannerFactory.Create(settings.Planner); }
+        try { planner = PlannerFactory.Create(settings.Planner, treeOnly: noScreenshot); }
         catch (Exception ex) { Log.Error(ex, "Failed to create planner"); return 1; }
-        Log.Information("Planner: {Provider} / {Model}", planner.ProviderName, planner.ModelId);
+        Log.Information("Planner: {Provider} / {Model} (screenshot={ScreenshotState})",
+            planner.ProviderName, planner.ModelId, noScreenshot ? "off" : "on");
 
         Log.Information("Attaching to process {Process}", process);
         using var session = UiaSession.Attach(process);
@@ -313,7 +329,9 @@ internal static class Program
                     Log.Information("Skills cache HIT for goal '{Goal}' ({Count} action(s), {Successes} prior run(s)). Replaying.",
                         goal, skill.Actions.Count, skill.SuccessCount);
 
-                    var replayer = new SkillReplayer(new ActionExecutor(session.TargetWindow), safetyGate);
+                    var replayer = new SkillReplayer(
+                        new ActionExecutor(session.TargetWindow, treeOnly: noScreenshot),
+                        safetyGate);
                     ReplayResult replay;
                     try
                     {
@@ -358,7 +376,8 @@ internal static class Program
 
             // 2. Live planning loop (M3 + M5 safety gate).
             var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate,
-                historyWindow: settings.Planner.HistoryWindow);
+                historyWindow: settings.Planner.HistoryWindow,
+                includeScreenshot: !noScreenshot);
             var result = await loop.RunAsync(goal!, ct);
 
             File.WriteAllText(
@@ -449,13 +468,16 @@ internal static class Program
                 foreground window. <name> is the process name without .exe.
 
               step --process <name> --goal "..." [--out <dir>] [--dry-run]
+                   [--no-screenshot]
                 Run ONE planning turn: dump tree + screenshot, ask the configured
                 LLM for the next action, then execute it via UIA. Requires
                 ANTHROPIC_API_KEY (or the provider's key) in the environment.
                 --dry-run prints the action without executing.
+                --no-screenshot skips the image attachment and runs the planner
+                tree-only (cheaper, requires AutomationIds in the target app).
 
               run --process <name> --goal "..." [--out <dir>] [--max-steps N]
-                  [--no-cache] [--no-safety] [--yes]
+                  [--no-cache] [--no-safety] [--yes] [--no-screenshot]
                 Multi-step planning loop. First checks the skills cache
                 (%LOCALAPPDATA%\DesktopAutoAI\skills) for a previously successful
                 action sequence for this (app, goal) pair - on hit it replays
@@ -465,11 +487,15 @@ internal static class Program
                 (default Ctrl+Shift+Backspace) aborts immediately, and any
                 destructive action (delete / send / submit / etc.) requires
                 console confirmation before it executes.
-                  --no-cache     Skip cache lookup and skip saving on success.
-                  --no-safety    Disable both the kill switch and the
-                                 destructive-action prompt for this run.
-                  --yes          Auto-confirm every destructive prompt. Use
-                                 only when you trust the goal and the model.
+                  --no-cache       Skip cache lookup and skip saving on success.
+                  --no-safety      Disable both the kill switch and the
+                                   destructive-action prompt for this run.
+                  --yes            Auto-confirm every destructive prompt. Use
+                                   only when you trust the goal and the model.
+                  --no-screenshot  Don't send the screenshot to the planner;
+                                   rely on the UIA tree alone. Coordinate
+                                   clicks are refused in this mode. Best
+                                   used with apps that expose AutomationIds.
                 Per-step artifacts (tree-NN.json, shot-NN.png, action-NN.json)
                 land in <out>, plus a final history.json.
 

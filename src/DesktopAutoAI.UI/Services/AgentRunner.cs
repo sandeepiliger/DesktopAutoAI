@@ -16,6 +16,7 @@ public sealed record RunOptions(
     bool UseCache,
     bool UseSafety,
     bool AutoYes,
+    bool IncludeScreenshot = true,
     int? MaxStepsOverride = null,
     string? OutDirOverride = null);
 
@@ -38,8 +39,10 @@ public sealed class AgentRunner
 
     public async Task<RunSummary> RunAsync(RunOptions opts, CancellationToken externalCt)
     {
-        var planner = PlannerFactory.Create(_settings.Planner);
-        Log.Information("Planner: {Provider} / {Model}", planner.ProviderName, planner.ModelId);
+        var planner = PlannerFactory.Create(_settings.Planner, treeOnly: !opts.IncludeScreenshot);
+        Log.Information("Planner: {Provider} / {Model} (screenshot={ScreenshotState})",
+            planner.ProviderName, planner.ModelId,
+            opts.IncludeScreenshot ? "on" : "off");
 
         Log.Information("Attaching to process {Process}", opts.ProcessName);
         using var session = UiaSession.Attach(opts.ProcessName);
@@ -96,7 +99,9 @@ public sealed class AgentRunner
                 {
                     Log.Information("Skills cache HIT ({Count} actions, {Successes} prior runs). Replaying.",
                         skill.Actions.Count, skill.SuccessCount);
-                    var replayer = new SkillReplayer(new ActionExecutor(session.TargetWindow), safetyGate);
+                    var replayer = new SkillReplayer(
+                        new ActionExecutor(session.TargetWindow, treeOnly: !opts.IncludeScreenshot),
+                        safetyGate);
                     var replay = await replayer.ReplayAsync(skill.Actions, ct);
                     if (replay.Succeeded)
                     {
@@ -115,7 +120,9 @@ public sealed class AgentRunner
                 }
             }
 
-            var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate);
+            var loop = new PlanningLoop(planner, session, maxSteps, screenshotMaxEdge: 1280, outDir, safetyGate,
+                historyWindow: _settings.Planner.HistoryWindow,
+                includeScreenshot: opts.IncludeScreenshot);
             var result = await loop.RunAsync(opts.Goal, ct);
 
             if (result.Outcome == LoopOutcome.Done && opts.UseCache && !result.ContainsPasswordFields)

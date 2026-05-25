@@ -20,7 +20,7 @@ public interface IActionPlanner
 public sealed record PlanRequest(
     string Goal,
     string FilteredTreeJson,
-    byte[] ScreenshotPng,
+    byte[]? ScreenshotPng,
     IReadOnlyList<HistoryEntry> History);
 
 public sealed record HistoryEntry(

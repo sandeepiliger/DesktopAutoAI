@@ -31,7 +31,7 @@ public sealed class GeminiPlanner : IActionPlanner
     public string ProviderName => "google";
     public string ModelId => _modelId;
 
-    public GeminiPlanner(string model, int maxTokens, string apiKey, int timeoutSeconds, string? apiVersion = null)
+    public GeminiPlanner(string model, int maxTokens, string apiKey, int timeoutSeconds, string? apiVersion = null, bool treeOnly = false)
     {
         if (string.IsNullOrWhiteSpace(model))
             throw new ArgumentException("Model is required.", nameof(model));
@@ -46,7 +46,7 @@ public sealed class GeminiPlanner : IActionPlanner
         var googleAI = new GoogleAI(apiKey: apiKey, apiVersion: _apiVersion);
         _genModel = googleAI.GenerativeModel(
             model: model,
-            systemInstruction: new Content(PlannerPrompts.SystemPrompt, role: "system"));
+            systemInstruction: new Content(PlannerPrompts.BuildSystemPrompt(treeOnly), role: "system"));
         _genModel.Timeout = _timeout;
     }
 
@@ -76,17 +76,21 @@ public sealed class GeminiPlanner : IActionPlanner
 
     public async Task<PlannedAction> PlanNextAsync(PlanRequest request, CancellationToken ct)
     {
-        var screenshotBase64 = Convert.ToBase64String(request.ScreenshotPng);
         var userText = PlannerPrompts.BuildUserText(request);
+        var hasImage = request.ScreenshotPng is { Length: > 0 };
+
+        var parts = new List<Part>();
+        if (hasImage)
+        {
+            var screenshotBase64 = Convert.ToBase64String(request.ScreenshotPng!);
+            parts.Add(new Part { InlineData = new InlineData { MimeType = "image/png", Data = screenshotBase64 } });
+        }
+        parts.Add(new Part { Text = userText });
 
         var userContent = new Content
         {
             Role = "user",
-            Parts =
-            [
-                new Part { InlineData = new InlineData { MimeType = "image/png", Data = screenshotBase64 } },
-                new Part { Text = userText },
-            ],
+            Parts = parts,
         };
 
         var req = new GenerateContentRequest
@@ -108,12 +112,12 @@ public sealed class GeminiPlanner : IActionPlanner
         };
 
         Log.Information(
-            "Gemini call: model={Model}, apiVersion={ApiVersion}, timeout={Timeout}s, tree_chars={TreeLen}, screenshot_bytes={ShotBytes}, history={History}",
+            "Gemini call: model={Model}, apiVersion={ApiVersion}, timeout={Timeout}s, tree_chars={TreeLen}, screenshot={ScreenshotState}, history={History}",
             _modelId,
             _apiVersion ?? "(sdk default)",
             (int)_timeout.TotalSeconds,
             request.FilteredTreeJson.Length,
-            request.ScreenshotPng.Length,
+            hasImage ? $"on ({request.ScreenshotPng!.Length} bytes)" : "off (tree-only)",
             request.History.Count);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
