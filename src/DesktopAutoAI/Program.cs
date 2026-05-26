@@ -234,6 +234,7 @@ internal static class Program
         bool noSafety = false;
         bool autoYes = false;
         bool noScreenshot = false;
+        bool batch = string.Equals(settings.Planner.Strategy, PlannerStrategies.Batch, StringComparison.OrdinalIgnoreCase);
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -255,6 +256,10 @@ internal static class Program
                     autoYes = true; break;
                 case "--no-screenshot":
                     noScreenshot = true; break;
+                case "--batch":
+                    batch = true; break;
+                case "--loop":
+                    batch = false; break;
                 default:
                     Log.Error("Unknown or incomplete argument: {Arg}", args[i]);
                     return 1;
@@ -272,10 +277,12 @@ internal static class Program
         Directory.CreateDirectory(outDir);
 
         IActionPlanner planner;
-        try { planner = PlannerFactory.Create(settings.Planner, treeOnly: noScreenshot); }
+        try { planner = PlannerFactory.Create(settings.Planner, treeOnly: batch || noScreenshot, batchMode: batch); }
         catch (Exception ex) { Log.Error(ex, "Failed to create planner"); return 1; }
-        Log.Information("Planner: {Provider} / {Model} (screenshot={ScreenshotState})",
-            planner.ProviderName, planner.ModelId, noScreenshot ? "off" : "on");
+        Log.Information("Planner: {Provider} / {Model} (strategy={Strategy}, screenshot={ScreenshotState})",
+            planner.ProviderName, planner.ModelId,
+            batch ? "batch" : "loop",
+            batch ? "off (batch is tree-only)" : (noScreenshot ? "off" : "on"));
 
         Log.Information("Attaching to process {Process}", process);
         using var session = UiaSession.Attach(process);
@@ -320,6 +327,11 @@ internal static class Program
 
         try
         {
+            // Batch strategy: plan-once + verify-and-repair (one LLM call per task).
+            if (batch)
+                return await RunBatchCommand(planner, session, cache, safetyGate, ct,
+                    process!, goal!, outDir, noCache, settings.Planner.MaxRepairs, JsonOpts);
+
             // 1. Try a cached skill first (skipped when --no-cache).
             if (!noCache)
             {
@@ -428,6 +440,86 @@ internal static class Program
         }
     }
 
+    private static async Task<int> RunBatchCommand(
+        IActionPlanner planner, UiaSession session, SkillsCache cache, SafetyGate? safetyGate,
+        CancellationToken ct, string process, string goal, string outDir, bool noCache, int maxRepairs,
+        JsonSerializerOptions jsonOpts)
+    {
+        var loop = new BatchPlanningLoop(planner, session, outDir, safetyGate, maxRepairs: maxRepairs);
+
+        // 1. Self-verifying cache replay (skipped with --no-cache).
+        if (!noCache)
+        {
+            var skill = cache.TryLoad(process, goal);
+            if (skill?.Steps is { Count: > 0 } steps)
+            {
+                Log.Information("Skills cache HIT for goal '{Goal}' ({Count} verified step(s), {N} prior run(s)). Replaying.",
+                    goal, steps.Count, skill.SuccessCount);
+                BatchResult replay;
+                try { replay = await loop.ReplayAsync(steps, ct); }
+                catch (OperationCanceledException) { Log.Warning("Replay cancelled."); return 130; }
+
+                if (replay.Outcome == BatchOutcome.Done)
+                {
+                    cache.SaveSteps(process, goal, replay.ExecutedPlan);
+                    File.WriteAllText(Path.Combine(outDir, "history.json"),
+                        JsonSerializer.Serialize(new
+                        {
+                            outcome = "ReplayedFromCache",
+                            steps = replay.StepsExecuted,
+                            message = replay.Message,
+                            cache_key = skill.CacheKey,
+                        }, jsonOpts));
+                    Log.Information("Replay finished cleanly in {Steps} step(s). No LLM call made.", replay.StepsExecuted);
+                    return 0;
+                }
+                if (replay.Outcome == BatchOutcome.Denied)
+                {
+                    Log.Warning("Replay aborted by user denial; not falling back.");
+                    return 5;
+                }
+                Log.Information("Replay diverged at step {Step}: {Msg}. Falling back to live batch planning.",
+                    replay.StepsExecuted + 1, replay.Message);
+            }
+            else
+            {
+                Log.Information("Skills cache MISS for goal '{Goal}' (no verified plan). Running live batch planner.", goal);
+            }
+        }
+
+        // 2. Live batch planning (plan-once + verify-and-repair).
+        BatchResult result;
+        try { result = await loop.RunAsync(goal, ct); }
+        catch (OperationCanceledException) { Log.Warning("Batch run cancelled."); return 130; }
+
+        File.WriteAllText(Path.Combine(outDir, "history.json"),
+            JsonSerializer.Serialize(new
+            {
+                outcome = result.Outcome.ToString(),
+                steps = result.StepsExecuted,
+                llm_calls = result.LlmCalls,
+                repairs = result.Repairs,
+                message = result.Message,
+                plan = result.ExecutedPlan,
+            }, jsonOpts));
+
+        if (result.Outcome == BatchOutcome.Done && !noCache && !result.ContainsPasswordFields)
+            cache.SaveSteps(process, goal, result.ExecutedPlan);
+        else if (result.ContainsPasswordFields)
+            Log.Warning("Batch run typed into a password field; skipping cache save to avoid persisting credentials.");
+
+        return result.Outcome switch
+        {
+            BatchOutcome.Done => 0,
+            BatchOutcome.Failed => 2,
+            BatchOutcome.MaxRepairs => 3,
+            BatchOutcome.PlannerError => 4,
+            BatchOutcome.Denied => 5,
+            BatchOutcome.Cancelled => 130,
+            _ => 1,
+        };
+    }
+
     private static async Task<int> PingCommand(string[] args, AppSettings settings)
     {
         if (args.Length != 0)
@@ -478,6 +570,7 @@ internal static class Program
 
               run --process <name> --goal "..." [--out <dir>] [--max-steps N]
                   [--no-cache] [--no-safety] [--yes] [--no-screenshot]
+                  [--batch | --loop]
                 Multi-step planning loop. First checks the skills cache
                 (%LOCALAPPDATA%\DesktopAutoAI\skills) for a previously successful
                 action sequence for this (app, goal) pair - on hit it replays
@@ -496,6 +589,16 @@ internal static class Program
                                    rely on the UIA tree alone. Coordinate
                                    clicks are refused in this mode. Best
                                    used with apps that expose AutomationIds.
+                  --batch          Plan the WHOLE task in one LLM call, then
+                                   execute deterministically and verify each
+                                   step locally, re-planning only on
+                                   divergence. ~1 LLM call per task instead of
+                                   one per step: far faster, cheaper, and
+                                   rate-limit-safe. Tree-only. Best for apps
+                                   with AutomationIds. (Default follows
+                                   Planner:Strategy in appsettings.json.)
+                  --loop           Force the per-step live loop even when
+                                   Planner:Strategy is "batch".
                 Per-step artifacts (tree-NN.json, shot-NN.png, action-NN.json)
                 land in <out>, plus a final history.json.
 

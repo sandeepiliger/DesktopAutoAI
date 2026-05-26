@@ -7,20 +7,25 @@ public static class PlannerFactory
     public const string Anthropic = "anthropic";
     public const string Google = "google";
 
-    public static IActionPlanner Create(PlannerSettings settings, bool treeOnly = false)
+    public static IActionPlanner Create(PlannerSettings settings, bool treeOnly = false, bool batchMode = false)
     {
         var provider = (settings.Provider ?? Anthropic).Trim().ToLowerInvariant();
+        // In batch mode an optional PlanModel overrides the provider's model so
+        // a stronger (one-shot) planner can be used without affecting loop mode.
+        var modelOverride = batchMode && !string.IsNullOrWhiteSpace(settings.PlanModel)
+            ? settings.PlanModel
+            : null;
         return provider switch
         {
-            Anthropic => CreateAnthropic(settings.Anthropic, treeOnly),
-            Google => CreateGemini(settings.Google, treeOnly),
+            Anthropic => CreateAnthropic(settings.Anthropic, treeOnly, modelOverride),
+            Google => CreateGemini(settings.Google, treeOnly, modelOverride),
             _ => throw new InvalidOperationException(
                 $"Unknown planner provider '{settings.Provider}'. " +
                 $"Supported: {Anthropic}, {Google}."),
         };
     }
 
-    private static AnthropicPlanner CreateAnthropic(AnthropicSettings settings, bool treeOnly)
+    private static AnthropicPlanner CreateAnthropic(AnthropicSettings settings, bool treeOnly, string? modelOverride)
     {
         var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
         if (string.IsNullOrEmpty(apiKey))
@@ -28,13 +33,13 @@ public static class PlannerFactory
                 "ANTHROPIC_API_KEY environment variable is not set.");
 
         return new AnthropicPlanner(
-            model: settings.Model,
+            model: string.IsNullOrWhiteSpace(modelOverride) ? settings.Model : modelOverride!,
             maxTokens: settings.MaxTokens,
             apiKey: apiKey,
             treeOnly: treeOnly);
     }
 
-    private static GeminiPlanner CreateGemini(GoogleSettings settings, bool treeOnly)
+    private static GeminiPlanner CreateGemini(GoogleSettings settings, bool treeOnly, string? modelOverride)
     {
         var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
                      ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY");
@@ -43,7 +48,7 @@ public static class PlannerFactory
                 "GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set.");
 
         return new GeminiPlanner(
-            model: settings.Model,
+            model: string.IsNullOrWhiteSpace(modelOverride) ? settings.Model : modelOverride!,
             maxTokens: settings.MaxTokens,
             apiKey: apiKey,
             timeoutSeconds: settings.TimeoutSeconds,
