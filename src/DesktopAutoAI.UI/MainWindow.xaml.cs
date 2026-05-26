@@ -140,7 +140,8 @@ public partial class MainWindow : Window
             UseCache: UseCacheCb.IsChecked == true,
             UseSafety: UseSafetyCb.IsChecked == true,
             AutoYes: AutoYesCb.IsChecked == true,
-            IncludeScreenshot: IncludeScreenshotCb.IsChecked == true);
+            IncludeScreenshot: IncludeScreenshotCb.IsChecked == true,
+            BatchMode: BatchModeCb.IsChecked == true);
 
         RunBtn.IsEnabled = false;
         StopBtn.IsEnabled = true;

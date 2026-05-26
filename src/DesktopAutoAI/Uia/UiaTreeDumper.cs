@@ -11,6 +11,13 @@ public sealed class TreeNode
     public string? AutomationId { get; init; }
     public bool IsEnabled { get; init; }
     public bool IsKeyboardFocusable { get; init; }
+    // Current state, populated where the control supports it. Lets the planner
+    // see starting values (e.g. a textbox that already has content to clear, a
+    // checkbox already on) instead of guessing.
+    public string? Value { get; init; }
+    public string? ToggleState { get; init; }
+    public bool? IsSelected { get; init; }
+    public double? RangeValue { get; init; }
     public List<string>? SupportedPatterns { get; init; }
     public List<int> Path { get; init; } = new();
     public List<TreeNode>? Children { get; init; }
@@ -66,6 +73,7 @@ public static class UiaTreeDumper
         if (!keep) return null;
 
         var patterns = ListSupportedPatterns(el);
+        ReadCurrentState(el, out var value, out var toggle, out var selected, out var range);
         return new TreeNode
         {
             ControlType = ctlType.ToString(),
@@ -73,10 +81,39 @@ public static class UiaTreeDumper
             AutomationId = string.IsNullOrEmpty(autoId) ? null : autoId,
             IsEnabled = el.Properties.IsEnabled.ValueOrDefault,
             IsKeyboardFocusable = el.Properties.IsKeyboardFocusable.ValueOrDefault,
+            Value = value,
+            ToggleState = toggle,
+            IsSelected = selected,
+            RangeValue = range,
             SupportedPatterns = patterns.Count > 0 ? patterns : null,
             Path = path,
             Children = childNodes.Count > 0 ? childNodes : null,
         };
+    }
+
+    private static void ReadCurrentState(
+        AutomationElement el, out string? value, out string? toggle, out bool? selected, out double? range)
+    {
+        value = null; toggle = null; selected = null; range = null;
+        try
+        {
+            var p = el.Patterns;
+            if (p.Value.IsSupported)
+            {
+                var v = p.Value.Pattern.Value.ValueOrDefault;
+                value = string.IsNullOrEmpty(v) ? null : v;
+            }
+            if (p.Toggle.IsSupported)
+                toggle = p.Toggle.Pattern.ToggleState.ValueOrDefault.ToString();
+            if (p.SelectionItem.IsSupported)
+                selected = p.SelectionItem.Pattern.IsSelected.ValueOrDefault;
+            if (p.RangeValue.IsSupported)
+                range = p.RangeValue.Pattern.Value.ValueOrDefault;
+        }
+        catch
+        {
+            // Reading pattern state can throw on transient elements; best effort.
+        }
     }
 
     private static List<string> ListSupportedPatterns(AutomationElement el)

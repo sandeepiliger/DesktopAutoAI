@@ -106,6 +106,53 @@ public sealed class AnthropicPlanner : IActionPlanner
             $"StopReason={response.StopReason}");
     }
 
+    public async Task<BatchPlan> PlanBatchAsync(BatchPlanRequest request, CancellationToken ct)
+    {
+        var userText = BatchPlannerPrompts.BuildUserText(request);
+
+        var parameters = new MessageCreateParams
+        {
+            Model = _model,
+            MaxTokens = _maxTokens,
+            System = BatchPlannerPrompts.SystemPrompt,
+            Tools = [BuildPlanActionsTool()],
+            ToolChoice = new ToolChoice(new ToolChoiceTool { Name = BatchPlannerPrompts.ToolName }),
+            Messages =
+            [
+                new MessageParam
+                {
+                    Role = Role.User,
+                    Content = new MessageParamContent(userText),
+                },
+            ],
+        };
+
+        Log.Information("Anthropic batch plan: model={Model}, tree_chars={TreeLen}, repair={Repair}",
+            _model, request.FilteredTreeJson.Length, request.FailureContext is not null);
+
+        var response = await _client.Messages.Create(parameters, cancellationToken: ct);
+
+        foreach (var block in response.Content)
+        {
+            if (block.TryPickToolUse(out var toolUse) && toolUse.Name == BatchPlannerPrompts.ToolName)
+            {
+                var json = JsonSerializer.Serialize(toolUse.Input);
+                Log.Debug("Anthropic batch raw tool input: {Json}", json);
+                var plan = JsonSerializer.Deserialize<BatchPlan>(json, JsonOpts)
+                    ?? throw new InvalidOperationException("Anthropic returned an empty plan_actions payload.");
+                return plan;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Anthropic did not return a plan_actions tool call. " +
+            $"StopReason={response.StopReason}");
+    }
+
+    private static Tool BuildPlanActionsTool()
+        => BuildToolFromSchema(BatchPlannerPrompts.ToolName, BatchPlannerPrompts.Description,
+            BatchPlannerPrompts.SchemaJson);
+
     private static List<ContentBlockParam> BuildUserContent(string text, string? screenshotBase64)
     {
         var blocks = new List<ContentBlockParam>();
@@ -126,8 +173,12 @@ public sealed class AnthropicPlanner : IActionPlanner
     }
 
     private static Tool BuildTakeActionTool()
+        => BuildToolFromSchema(PlannerPrompts.ToolName, PlannerPrompts.TakeActionDescription,
+            PlannerPrompts.TakeActionSchemaJson);
+
+    private static Tool BuildToolFromSchema(string name, string description, string schemaJson)
     {
-        using var doc = JsonDocument.Parse(PlannerPrompts.TakeActionSchemaJson);
+        using var doc = JsonDocument.Parse(schemaJson);
         var root = doc.RootElement;
         var properties = new Dictionary<string, JsonElement>();
         foreach (var prop in root.GetProperty("properties").EnumerateObject())
@@ -139,8 +190,8 @@ public sealed class AnthropicPlanner : IActionPlanner
 
         return new Tool
         {
-            Name = PlannerPrompts.ToolName,
-            Description = PlannerPrompts.TakeActionDescription,
+            Name = name,
+            Description = description,
             InputSchema = new InputSchema
             {
                 Properties = properties,

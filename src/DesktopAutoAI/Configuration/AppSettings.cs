@@ -20,8 +20,32 @@ public sealed class PlannerSettings
     /// <summary>How many recent history entries to send to the LLM per step.
     /// Caps token growth on long runs.</summary>
     public int HistoryWindow { get; set; } = 10;
+
+    /// <summary>Planning strategy: "loop" (one LLM call per step, can use a
+    /// screenshot) or "batch" (one call for the whole task, verify each step
+    /// locally, repair on divergence). Default "loop" for backwards
+    /// compatibility; the UI toggle / --batch flag select per run.</summary>
+    public string Strategy { get; set; } = "loop";
+
+    /// <summary>Batch mode only: how many times the loop may re-plan from the
+    /// current state when a step fails verification before giving up.</summary>
+    public int MaxRepairs { get; set; } = 3;
+
+    /// <summary>Batch mode only: optional model id used for the (single, more
+    /// expensive) planning call. Must be valid for the configured provider.
+    /// When null, the provider's normal Model is used. Set this to a stronger
+    /// model (e.g. gemini-2.5-pro) for higher accuracy at negligible cost,
+    /// since batch makes just one call.</summary>
+    public string? PlanModel { get; set; }
+
     public AnthropicSettings Anthropic { get; set; } = new();
     public GoogleSettings Google { get; set; } = new();
+}
+
+public static class PlannerStrategies
+{
+    public const string Loop = "loop";
+    public const string Batch = "batch";
 }
 
 public sealed class AnthropicSettings

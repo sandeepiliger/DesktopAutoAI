@@ -17,6 +17,7 @@ public sealed record RunOptions(
     bool UseSafety,
     bool AutoYes,
     bool IncludeScreenshot = true,
+    bool BatchMode = false,
     int? MaxStepsOverride = null,
     string? OutDirOverride = null);
 
@@ -39,10 +40,12 @@ public sealed class AgentRunner
 
     public async Task<RunSummary> RunAsync(RunOptions opts, CancellationToken externalCt)
     {
-        var planner = PlannerFactory.Create(_settings.Planner, treeOnly: !opts.IncludeScreenshot);
-        Log.Information("Planner: {Provider} / {Model} (screenshot={ScreenshotState})",
+        var treeOnly = opts.BatchMode || !opts.IncludeScreenshot;
+        var planner = PlannerFactory.Create(_settings.Planner, treeOnly: treeOnly, batchMode: opts.BatchMode);
+        Log.Information("Planner: {Provider} / {Model} (strategy={Strategy}, screenshot={ScreenshotState})",
             planner.ProviderName, planner.ModelId,
-            opts.IncludeScreenshot ? "on" : "off");
+            opts.BatchMode ? "batch" : "loop",
+            opts.BatchMode ? "off (batch is tree-only)" : (opts.IncludeScreenshot ? "on" : "off"));
 
         Log.Information("Attaching to process {Process}", opts.ProcessName);
         using var session = UiaSession.Attach(opts.ProcessName);
@@ -92,6 +95,9 @@ public sealed class AgentRunner
 
         try
         {
+            if (opts.BatchMode)
+                return await RunBatchAsync(opts, planner, session, cache, safetyGate, outDir, ct);
+
             if (opts.UseCache)
             {
                 var skill = cache.TryLoad(opts.ProcessName, opts.Goal);
@@ -146,4 +152,57 @@ public sealed class AgentRunner
             killSwitch?.Dispose();
         }
     }
+
+    private async Task<RunSummary> RunBatchAsync(
+        RunOptions opts, IActionPlanner planner, UiaSession session, SkillsCache cache,
+        SafetyGate? safetyGate, string outDir, CancellationToken ct)
+    {
+        var loop = new BatchPlanningLoop(planner, session, outDir, safetyGate,
+            maxRepairs: _settings.Planner.MaxRepairs);
+
+        if (opts.UseCache)
+        {
+            var skill = cache.TryLoad(opts.ProcessName, opts.Goal);
+            if (skill?.Steps is { Count: > 0 } steps)
+            {
+                Log.Information("Skills cache HIT ({Count} verified steps, {Successes} prior runs). Replaying.",
+                    steps.Count, skill.SuccessCount);
+                var replay = await loop.ReplayAsync(steps, ct);
+                if (replay.Outcome == BatchOutcome.Done)
+                {
+                    cache.SaveSteps(opts.ProcessName, opts.Goal, replay.ExecutedPlan);
+                    return new RunSummary(LoopOutcome.Done, replay.StepsExecuted,
+                        "Replayed from cache: " + replay.Message, outDir);
+                }
+                if (replay.Outcome == BatchOutcome.Denied)
+                    return new RunSummary(LoopOutcome.Denied, replay.StepsExecuted, replay.Message, outDir);
+                Log.Information("Replay diverged at step {Step}: {Msg}. Falling back to live batch planning.",
+                    replay.StepsExecuted + 1, replay.Message);
+            }
+            else
+            {
+                Log.Information("Skills cache MISS (no verified plan). Running live batch planner.");
+            }
+        }
+
+        var result = await loop.RunAsync(opts.Goal, ct);
+
+        if (result.Outcome == BatchOutcome.Done && opts.UseCache && !result.ContainsPasswordFields)
+            cache.SaveSteps(opts.ProcessName, opts.Goal, result.ExecutedPlan);
+        else if (result.ContainsPasswordFields)
+            Log.Warning("Batch run typed into a password field; skipping cache save.");
+
+        return new RunSummary(MapBatchOutcome(result.Outcome), result.StepsExecuted, result.Message, outDir);
+    }
+
+    internal static LoopOutcome MapBatchOutcome(BatchOutcome o) => o switch
+    {
+        BatchOutcome.Done => LoopOutcome.Done,
+        BatchOutcome.Failed => LoopOutcome.Failed,
+        BatchOutcome.PlannerError => LoopOutcome.PlannerError,
+        BatchOutcome.Cancelled => LoopOutcome.Cancelled,
+        BatchOutcome.Denied => LoopOutcome.Denied,
+        BatchOutcome.MaxRepairs => LoopOutcome.MaxSteps,
+        _ => LoopOutcome.Failed,
+    };
 }
