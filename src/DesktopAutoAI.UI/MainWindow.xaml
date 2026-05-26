@@ -61,21 +61,25 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" x:Name="RunBtn" Content="Run" Click="OnRun"
                     FontWeight="Bold" Padding="22,6"/>
             <Button Grid.Column="1" x:Name="StopBtn" Content="Stop" Click="OnStop"
                     Margin="8,0,0,0" IsEnabled="False"/>
-            <CheckBox Grid.Column="3" x:Name="UseCacheCb" Content="Use cache"
+            <CheckBox Grid.Column="3" x:Name="IncludeScreenshotCb" Content="Include screenshot"
+                      VerticalAlignment="Center" Margin="0,0,12,0" IsChecked="False"
+                      ToolTip="When checked, send a screenshot of the target window with every planner step. Costs ~1,500 image tokens per step. Leave unchecked to run tree-only (faster, cheaper) when AutomationIds are present."/>
+            <CheckBox Grid.Column="4" x:Name="UseCacheCb" Content="Use cache"
                       VerticalAlignment="Center" Margin="0,0,12,0" IsChecked="True"
                       ToolTip="When checked, look up and save successful runs in %LOCALAPPDATA%\DesktopAutoAI\skills."/>
-            <CheckBox Grid.Column="4" x:Name="UseSafetyCb" Content="Safety on"
+            <CheckBox Grid.Column="5" x:Name="UseSafetyCb" Content="Safety on"
                       VerticalAlignment="Center" Margin="0,0,12,0" IsChecked="True"
                       ToolTip="When checked, destructive actions require confirmation and the kill-switch hotkey is armed."/>
-            <CheckBox Grid.Column="5" x:Name="AutoYesCb" Content="Auto-confirm"
+            <CheckBox Grid.Column="6" x:Name="AutoYesCb" Content="Auto-confirm"
                       VerticalAlignment="Center" Margin="0,0,12,0"
                       ToolTip="Auto-approve every destructive prompt for this run."/>
-            <Button Grid.Column="6" Content="Clear log" Click="OnClearLog"/>
+            <Button Grid.Column="7" Content="Clear log" Click="OnClearLog"/>
         </Grid>
 
         <!-- Row 3: log viewer -->

@@ -18,10 +18,12 @@ public sealed record ExecutionResult(
 public sealed class ActionExecutor
 {
     private readonly AutomationElement _root;
+    private readonly bool _treeOnly;
 
-    public ActionExecutor(AutomationElement targetWindowRoot)
+    public ActionExecutor(AutomationElement targetWindowRoot, bool treeOnly = false)
     {
         _root = targetWindowRoot;
+        _treeOnly = treeOnly;
     }
 
     public ExecutionResult Execute(AgentAction action, CancellationToken ct)
@@ -216,6 +218,8 @@ public sealed class ActionExecutor
 
     private ExecutionResult DoClick(AgentAction a)
     {
+        if (_treeOnly)
+            return Fail("click is disabled (tree-only mode). Use 'invoke' with selector.automation_id instead.");
         if (a.Point is null) return Fail("click requires a point.");
         Mouse.MoveTo(a.Point.X, a.Point.Y);
         Mouse.LeftClick();

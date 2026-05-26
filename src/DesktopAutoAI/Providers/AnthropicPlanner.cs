@@ -21,17 +21,19 @@ public sealed class AnthropicPlanner : IActionPlanner
     private readonly AnthropicClient _client;
     private readonly string _model;
     private readonly int _maxTokens;
+    private readonly string _systemPrompt;
 
     public string ProviderName => "anthropic";
     public string ModelId => _model;
 
-    public AnthropicPlanner(string model, int maxTokens, string? apiKey)
+    public AnthropicPlanner(string model, int maxTokens, string? apiKey, bool treeOnly = false)
     {
         if (string.IsNullOrWhiteSpace(model))
             throw new ArgumentException("Model is required.", nameof(model));
 
         _model = model;
         _maxTokens = maxTokens > 0 ? maxTokens : 2048;
+        _systemPrompt = PlannerPrompts.BuildSystemPrompt(treeOnly);
         _client = string.IsNullOrEmpty(apiKey)
             ? new AnthropicClient()
             : new AnthropicClient { ApiKey = apiKey };
@@ -59,14 +61,15 @@ public sealed class AnthropicPlanner : IActionPlanner
 
     public async Task<PlannedAction> PlanNextAsync(PlanRequest request, CancellationToken ct)
     {
-        var screenshotBase64 = Convert.ToBase64String(request.ScreenshotPng);
         var userText = PlannerPrompts.BuildUserText(request);
+        var hasImage = request.ScreenshotPng is { Length: > 0 };
+        var screenshotBase64 = hasImage ? Convert.ToBase64String(request.ScreenshotPng!) : null;
 
         var parameters = new MessageCreateParams
         {
             Model = _model,
             MaxTokens = _maxTokens,
-            System = PlannerPrompts.SystemPrompt,
+            System = _systemPrompt,
             Tools = [BuildTakeActionTool()],
             ToolChoice = new ToolChoice(new ToolChoiceTool { Name = PlannerPrompts.ToolName }),
             Messages =
@@ -79,8 +82,9 @@ public sealed class AnthropicPlanner : IActionPlanner
             ],
         };
 
-        Log.Debug("Anthropic planner: model={Model}, tree_chars={TreeLen}, history={History}",
-            _model, request.FilteredTreeJson.Length, request.History.Count);
+        Log.Debug("Anthropic planner: model={Model}, tree_chars={TreeLen}, screenshot={ScreenshotState}, history={History}",
+            _model, request.FilteredTreeJson.Length,
+            hasImage ? "on" : "off (tree-only)", request.History.Count);
 
         var response = await _client.Messages.Create(parameters, cancellationToken: ct);
 
@@ -102,21 +106,23 @@ public sealed class AnthropicPlanner : IActionPlanner
             $"StopReason={response.StopReason}");
     }
 
-    private static List<ContentBlockParam> BuildUserContent(string text, string screenshotBase64)
+    private static List<ContentBlockParam> BuildUserContent(string text, string? screenshotBase64)
     {
-        var image = new ImageBlockParam
+        var blocks = new List<ContentBlockParam>();
+        if (!string.IsNullOrEmpty(screenshotBase64))
         {
-            Source = new ImageBlockParamSource(new Base64ImageSource
+            var image = new ImageBlockParam
             {
-                MediaType = MediaType.ImagePng,
-                Data = screenshotBase64,
-            }),
-        };
-        return
-        [
-            new ContentBlockParam(image),
-            new ContentBlockParam(new TextBlockParam { Text = text }),
-        ];
+                Source = new ImageBlockParamSource(new Base64ImageSource
+                {
+                    MediaType = MediaType.ImagePng,
+                    Data = screenshotBase64,
+                }),
+            };
+            blocks.Add(new ContentBlockParam(image));
+        }
+        blocks.Add(new ContentBlockParam(new TextBlockParam { Text = text }));
+        return blocks;
     }
 
     private static Tool BuildTakeActionTool()
