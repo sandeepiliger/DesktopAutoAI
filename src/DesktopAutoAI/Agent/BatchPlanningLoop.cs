@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using DesktopAutoAI.Providers;
 using DesktopAutoAI.Safety;
 using DesktopAutoAI.Uia;
+using FlaUI.Core.Definitions;
 using FlaUI.Core.Exceptions;
 using Serilog;
 
@@ -84,7 +85,15 @@ public sealed class BatchPlanningLoop
         BatchPlan plan;
         try
         {
-            var tree = CaptureTree("plan-00");
+            var (tree, nodeCount) = await CaptureTreeAsync("plan-00", ct);
+            if (nodeCount <= 1)
+            {
+                return Finish(BatchOutcome.PlannerError, executed, 0, llmCalls, repairs,
+                    $"UIA tree is empty ({nodeCount} node). The target window exposed no automation elements. " +
+                    "Check that the right window is selected, restored (not minimized), and fully loaded, " +
+                    "then try again. (Saved tree-plan-00.json for inspection.)",
+                    containsPassword, sw);
+            }
             plan = await _planner.PlanBatchAsync(new BatchPlanRequest(goal, tree), ct);
             llmCalls++;
         }
@@ -213,7 +222,7 @@ public sealed class BatchPlanningLoop
             repairs++;
             try
             {
-                var tree = CaptureTree($"plan-repair-{repairs:D2}");
+                var (tree, _) = await CaptureTreeAsync($"plan-repair-{repairs:D2}", ct);
                 plan = await _planner.PlanBatchAsync(new BatchPlanRequest(goal, tree, failureContext), ct);
                 llmCalls++;
             }
@@ -339,13 +348,71 @@ public sealed class BatchPlanningLoop
         }
     }
 
-    private string CaptureTree(string artifactName)
+    // Dumps the UIA tree, restoring the window and retrying while the tree
+    // comes back empty (the common "window minimized / not yet rendered"
+    // failure that yields a root-only tree the model can't act on).
+    private async Task<(string Json, int NodeCount)> CaptureTreeAsync(string artifactName, CancellationToken ct)
     {
-        var tree = UiaTreeDumper.Dump(_session.TargetWindow);
-        var compact = JsonSerializer.Serialize(tree, TreeJsonOpts);
+        int[] delaysMs = { 0, 400, 800 };
+        TreeNode best = new() { ControlType = "Unknown" };
+        int bestCount = 0;
+
+        foreach (var delay in delaysMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (delay > 0) await Task.Delay(delay, ct);
+
+            TryRestoreWindow();
+            var tree = UiaTreeDumper.Dump(_session.TargetWindow);
+            var count = CountNodes(tree);
+            if (count > bestCount) { best = tree; bestCount = count; }
+            if (count > 1) break;
+
+            Log.Debug("UIA tree dump returned {Count} node(s); window may not be ready, retrying.", count);
+        }
+
+        var compact = JsonSerializer.Serialize(best, TreeJsonOpts);
         File.WriteAllText(Path.Combine(_outDir, $"tree-{artifactName}.json"),
-            JsonSerializer.Serialize(tree, ArtifactOpts));
-        return compact;
+            JsonSerializer.Serialize(best, ArtifactOpts));
+        Log.Information("Captured UIA tree: {Count} node(s), {Chars} chars (window '{Title}').",
+            bestCount, compact.Length, SafeTitle());
+        return (compact, bestCount);
+    }
+
+    private string SafeTitle()
+    {
+        try { return _session.TargetWindow.Title ?? "(no title)"; }
+        catch { return "(unavailable)"; }
+    }
+
+    private void TryRestoreWindow()
+    {
+        try
+        {
+            var win = _session.TargetWindow;
+            if (win.Patterns.Window.IsSupported)
+            {
+                var wp = win.Patterns.Window.Pattern;
+                if (wp.WindowVisualState.ValueOrDefault == WindowVisualState.Minimized)
+                {
+                    Log.Information("Target window is minimized; restoring it before dumping the tree.");
+                    wp.SetWindowVisualState(WindowVisualState.Normal);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not restore the target window; continuing.");
+        }
+    }
+
+    private static int CountNodes(TreeNode? node)
+    {
+        if (node is null) return 0;
+        int count = 1;
+        if (node.Children is { } children)
+            foreach (var child in children) count += CountNodes(child);
+        return count;
     }
 
     private void WriteArtifact<T>(string filename, T payload)
