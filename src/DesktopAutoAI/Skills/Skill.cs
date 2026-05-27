@@ -16,4 +16,8 @@ public sealed record Skill(
     DateTimeOffset CreatedAt,
     DateTimeOffset LastUsedAt,
     int SuccessCount,
-    IReadOnlyList<AgentAction> Actions);
+    IReadOnlyList<AgentAction> Actions,
+    // Present when the skill was recorded in batch mode. Carries each action's
+    // verified postcondition so replay is self-checking against app drift. The
+    // flat Actions list is still populated for the per-step replayer's benefit.
+    IReadOnlyList<PlanStep>? Steps = null);

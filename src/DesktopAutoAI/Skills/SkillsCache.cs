@@ -81,6 +81,17 @@ public sealed class SkillsCache
     }
 
     public void Save(string appExecutable, string goal, IReadOnlyList<AgentAction> actions)
+        => Save(appExecutable, goal, actions, steps: null);
+
+    /// <summary>Save a batch-mode skill, preserving each step's verified
+    /// postcondition so replay can self-check against app drift.</summary>
+    public void SaveSteps(string appExecutable, string goal, IReadOnlyList<PlanStep> steps)
+    {
+        var actions = steps.Select(s => s.Action).ToList();
+        Save(appExecutable, goal, actions, steps);
+    }
+
+    private void Save(string appExecutable, string goal, IReadOnlyList<AgentAction> actions, IReadOnlyList<PlanStep>? steps)
     {
         if (actions.Count == 0)
         {
@@ -107,11 +118,12 @@ public sealed class SkillsCache
             CreatedAt: existing?.CreatedAt ?? now,
             LastUsedAt: now,
             SuccessCount: (existing?.SuccessCount ?? 0) + 1,
-            Actions: actions);
+            Actions: actions,
+            Steps: steps);
 
         File.WriteAllText(path, JsonSerializer.Serialize(record, JsonOpts));
-        Log.Information("Saved skill ({Count} action(s), run #{N}) to {Path}",
-            actions.Count, record.SuccessCount, path);
+        Log.Information("Saved skill ({Count} action(s){Verified}, run #{N}) to {Path}",
+            actions.Count, steps is not null ? ", verified" : "", record.SuccessCount, path);
     }
 
     public bool Delete(string appExecutable, string goal)
